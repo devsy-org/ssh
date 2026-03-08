@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"sync"
 
@@ -12,7 +14,8 @@ import (
 )
 
 const (
-	x11RequestType = "x11-req"
+	x11RequestType       = "x11-req"
+	keepAliveRequestType = "keepalive@openssh.com"
 )
 
 // Session provides access to information about an SSH session and methods
@@ -90,6 +93,13 @@ type Session interface {
 	// the request handling loop. Registering nil will unregister the channel.
 	// During the time that no channel is registered, breaks are ignored.
 	Break(c chan<- bool)
+
+	// DisablePTYEmulation disables the session's default minimal PTY emulation.
+	// If you're setting the pty's termios settings from the Pty request, use
+	// this method to avoid corruption.
+	// Currently (2022-03-12) the only emulation implemented is NL-to-CRNL translation (`\n`=>`\r\n`).
+	// A call of DisablePTYEmulation must precede any call to Write.
+	DisablePTYEmulation()
 }
 
 // maxSigBufSize is how many signals will be buffered
@@ -112,7 +122,7 @@ func DefaultSessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.Ne
 		subsystemHandlers: srv.SubsystemHandlers,
 		ctx:               ctx,
 	}
-	sess.handleRequests(reqs)
+	sess.handleRequests(ctx, reqs)
 }
 
 type session struct {
@@ -128,18 +138,27 @@ type session struct {
 	winch             chan Window
 	env               []string
 	ptyCb             PtyCallback
-	x11Cb             X11ForwardingCallback
+	x11Cb             X11Callback
 	sessReqCb         SessionRequestCallback
 	rawCmd            string
 	subsystem         string
 	ctx               Context
-	sigCh             chan<- Signal
-	sigBuf            []Signal
-	breakCh           chan<- bool
+	// sigMu protects sigCh and sigBuf, it is made separate from the
+	// session mutex to reduce the risk of deadlocks while we process
+	// buffered signals.
+	sigMu               sync.Mutex
+	sigCh               chan<- Signal
+	sigBuf              []Signal
+	breakCh             chan<- bool
+	disablePtyEmulation bool
+}
+
+func (sess *session) DisablePTYEmulation() {
+	sess.disablePtyEmulation = true
 }
 
 func (sess *session) Write(p []byte) (n int, err error) {
-	if sess.pty != nil {
+	if sess.pty != nil && !sess.disablePtyEmulation {
 		m := len(p)
 		// normalize \n to \r\n when pty is accepted.
 		// this is a hardcoded shortcut since we don't support terminal modes.
@@ -233,16 +252,23 @@ func (sess *session) X11() (X11, bool) {
 }
 
 func (sess *session) Signals(c chan<- Signal) {
-	sess.Lock()
-	defer sess.Unlock()
+	sess.sigMu.Lock()
 	sess.sigCh = c
-	if len(sess.sigBuf) > 0 {
-		go func() {
-			for _, sig := range sess.sigBuf {
-				sess.sigCh <- sig
-			}
-		}()
+	if len(sess.sigBuf) == 0 || sess.sigCh == nil {
+		sess.sigMu.Unlock()
+		return
 	}
+	// If we have buffered signals, we need to send them whilst
+	// holding the signal mutex to avoid race conditions on sigCh
+	// and sigBuf.
+	go func() {
+		defer sess.sigMu.Unlock()
+
+		for _, sig := range sess.sigBuf {
+			sess.sigCh <- sig
+		}
+		sess.sigBuf = nil
+	}()
 }
 
 func (sess *session) Break(c chan<- bool) {
@@ -251,163 +277,217 @@ func (sess *session) Break(c chan<- bool) {
 	sess.breakCh = c
 }
 
-func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
-	for req := range reqs {
-		switch req.Type {
-		case "shell", "exec":
-			if sess.handled {
-				req.Reply(false, nil)
-				continue
+func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
+	keepAlive := ctx.KeepAlive()
+	defer keepAlive.Close()
+
+	var keepAliveRequestInProgress sync.Mutex
+	for {
+		select {
+		case <-keepAlive.Ticks():
+			if keepAlive.TimeIsUp() {
+				log.Println("Keep-alive reply not received. Close down the session.")
+				_ = sess.Close()
+				return
 			}
 
-			var payload = struct{ Value string }{}
-			gossh.Unmarshal(req.Payload, &payload)
-			sess.rawCmd = payload.Value
-
-			// If there's a session policy callback, we need to confirm before
-			// accepting the session.
-			if sess.sessReqCb != nil && !sess.sessReqCb(sess, req.Type) {
-				sess.rawCmd = ""
-				req.Reply(false, nil)
+			done := keepAliveRequestInProgress.TryLock()
+			if !done {
 				continue
 			}
-
-			sess.handled = true
-			req.Reply(true, nil)
 
 			go func() {
-				sess.handler(sess)
-				sess.Exit(0)
-			}()
-		case "subsystem":
-			if sess.handled {
-				req.Reply(false, nil)
-				continue
-			}
+				defer keepAliveRequestInProgress.Unlock()
 
-			var payload = struct{ Value string }{}
-			gossh.Unmarshal(req.Payload, &payload)
-			sess.subsystem = payload.Value
-
-			// If there's a session policy callback, we need to confirm before
-			// accepting the session.
-			if sess.sessReqCb != nil && !sess.sessReqCb(sess, req.Type) {
-				sess.rawCmd = ""
-				req.Reply(false, nil)
-				continue
-			}
-
-			handler := sess.subsystemHandlers[payload.Value]
-			if handler == nil {
-				handler = sess.subsystemHandlers["default"]
-			}
-			if handler == nil {
-				req.Reply(false, nil)
-				continue
-			}
-
-			sess.handled = true
-			req.Reply(true, nil)
-
-			go func() {
-				handler(sess)
-				sess.Exit(0)
-			}()
-		case "env":
-			if sess.handled {
-				req.Reply(false, nil)
-				continue
-			}
-			var kv struct{ Key, Value string }
-			gossh.Unmarshal(req.Payload, &kv)
-			sess.env = append(sess.env, fmt.Sprintf("%s=%s", kv.Key, kv.Value))
-			req.Reply(true, nil)
-		case "signal":
-			var payload struct{ Signal string }
-			gossh.Unmarshal(req.Payload, &payload)
-			sess.Lock()
-			if sess.sigCh != nil {
-				sess.sigCh <- Signal(payload.Signal)
-			} else {
-				if len(sess.sigBuf) < maxSigBufSize {
-					sess.sigBuf = append(sess.sigBuf, Signal(payload.Signal))
+				// Server-initiated keep-alive flow on the client side:
+				// client: receive packet: type 98 (SSH_MSG_CHANNEL_REQUEST)
+				// client: client_input_channel_req: channel 0 rtype keepalive@openssh.com reply 1
+				// client: send packet: type 100 (SSH_MSG_CHANNEL_FAILURE)
+				//
+				// Apparently, OpenSSH client always replies with 100, but it does not matter
+				// as the server considers it as alive (only the response status is ignored).
+				_, err := sess.SendRequest(keepAliveRequestType, true, nil)
+				keepAlive.ServerRequestedKeepAliveCallback()
+				if err != nil && err != io.EOF {
+					log.Printf("Sending keep-alive request failed: %v", err)
+				} else if err == nil {
+					keepAlive.Reset()
 				}
-			}
-			sess.Unlock()
-		case "pty-req":
-			if sess.handled || sess.pty != nil {
-				req.Reply(false, nil)
-				continue
-			}
-			ptyReq, ok := parsePtyRequest(req.Payload)
+			}()
+		case req, ok := <-reqs:
 			if !ok {
-				req.Reply(false, nil)
-				continue
+				return
 			}
-			if sess.ptyCb != nil {
-				ok := sess.ptyCb(sess.ctx, ptyReq)
+
+			switch req.Type {
+			case "shell", "exec":
+				if sess.handled {
+					req.Reply(false, nil)
+					continue
+				}
+
+				var payload = struct{ Value string }{}
+				gossh.Unmarshal(req.Payload, &payload)
+				sess.rawCmd = payload.Value
+
+				// If there's a session policy callback, we need to confirm before
+				// accepting the session.
+				if sess.sessReqCb != nil && !sess.sessReqCb(sess, req.Type) {
+					sess.rawCmd = ""
+					req.Reply(false, nil)
+					continue
+				}
+
+				sess.handled = true
+				req.Reply(true, nil)
+
+				go func() {
+					sess.handler(sess)
+					sess.Exit(0)
+				}()
+			case "subsystem":
+				if sess.handled {
+					req.Reply(false, nil)
+					continue
+				}
+
+				var payload = struct{ Value string }{}
+				gossh.Unmarshal(req.Payload, &payload)
+				sess.subsystem = payload.Value
+
+				// If there's a session policy callback, we need to confirm before
+				// accepting the session.
+				if sess.sessReqCb != nil && !sess.sessReqCb(sess, req.Type) {
+					sess.rawCmd = ""
+					req.Reply(false, nil)
+					continue
+				}
+
+				handler := sess.subsystemHandlers[payload.Value]
+				if handler == nil {
+					handler = sess.subsystemHandlers["default"]
+				}
+				if handler == nil {
+					req.Reply(false, nil)
+					continue
+				}
+
+				sess.handled = true
+				req.Reply(true, nil)
+
+				go func() {
+					handler(sess)
+					sess.Exit(0)
+				}()
+			case "env":
+				if sess.handled {
+					req.Reply(false, nil)
+					continue
+				}
+				var kv struct{ Key, Value string }
+				gossh.Unmarshal(req.Payload, &kv)
+				sess.env = append(sess.env, fmt.Sprintf("%s=%s", kv.Key, kv.Value))
+				req.Reply(true, nil)
+			case "signal":
+				var payload struct{ Signal string }
+				gossh.Unmarshal(req.Payload, &payload)
+				sess.sigMu.Lock()
+				if sess.sigCh != nil {
+					sess.sigCh <- Signal(payload.Signal)
+				} else {
+					if len(sess.sigBuf) < maxSigBufSize {
+						sess.sigBuf = append(sess.sigBuf, Signal(payload.Signal))
+					}
+				}
+				sess.sigMu.Unlock()
+			case "pty-req":
+				if sess.handled || sess.pty != nil {
+					req.Reply(false, nil)
+					continue
+				}
+				ptyReq, ok := parsePtyRequest(req.Payload)
 				if !ok {
 					req.Reply(false, nil)
 					continue
 				}
-			}
-			sess.pty = &ptyReq
-			sess.winch = make(chan Window, 1)
-			sess.winch <- ptyReq.Window
-			defer func() {
-				// when reqs is closed
-				close(sess.winch)
-			}()
-			req.Reply(ok, nil)
-		case x11RequestType:
-			// X11 forwarding requires injecting environment variables
-			// into the shell started by the session. It can only be done
-			// once, before the session has been handled.
-			if sess.handled || sess.x11 != nil {
-				req.Reply(false, nil)
-				continue
-			}
-			x11Req, ok := parseX11Request(req.Payload)
-			if !ok {
-				req.Reply(false, nil)
-				continue
-			}
-			if sess.x11Cb != nil {
-				ok := sess.x11Cb(sess.ctx, x11Req)
+				if sess.ptyCb != nil {
+					ok := sess.ptyCb(sess.ctx, ptyReq)
+					if !ok {
+						req.Reply(false, nil)
+						continue
+					}
+				}
+				sess.pty = &ptyReq
+				sess.winch = make(chan Window, 1)
+				sess.winch <- ptyReq.Window
+				defer func() {
+					// when reqs is closed
+					close(sess.winch)
+				}()
+				req.Reply(ok, nil)
+			case x11RequestType:
+				if sess.handled || sess.x11 != nil {
+					req.Reply(false, nil)
+					continue
+				}
+				x11Req, ok := parseX11Request(req.Payload)
 				if !ok {
 					req.Reply(false, nil)
 					continue
 				}
-			}
-			sess.x11 = &x11Req
-			req.Reply(ok, nil)
-		case "window-change":
-			if sess.pty == nil {
+				if sess.x11Cb != nil {
+					ok := sess.x11Cb(sess.ctx, x11Req)
+					if !ok {
+						req.Reply(false, nil)
+						continue
+					}
+				}
+				sess.x11 = &x11Req
+				req.Reply(ok, nil)
+			case "window-change":
+				if sess.pty == nil {
+					req.Reply(false, nil)
+					continue
+				}
+				win, _, ok := parseWindow(req.Payload)
+				if ok {
+					sess.pty.Window = win
+					sess.winch <- win
+				}
+				req.Reply(ok, nil)
+			case agentRequestType:
+				// TODO: option/callback to allow agent forwarding
+				SetAgentRequested(sess.ctx)
+				req.Reply(true, nil)
+			case keepAliveRequestType:
+				if req.WantReply {
+					req.Reply(true, nil)
+				}
+			case "break":
+				ok := false
+				sess.Lock()
+				if sess.breakCh != nil {
+					sess.breakCh <- true
+					ok = true
+				}
+				req.Reply(ok, nil)
+				sess.Unlock()
+			default:
+				// TODO: debug log
 				req.Reply(false, nil)
-				continue
 			}
-			win, ok := parseWinchRequest(req.Payload)
-			if ok {
-				sess.pty.Window = win
-				sess.winch <- win
-			}
-			req.Reply(ok, nil)
-		case agentRequestType:
-			// TODO: option/callback to allow agent forwarding
-			SetAgentRequested(sess.ctx)
-			req.Reply(true, nil)
-		case "break":
-			ok := false
-			sess.Lock()
-			if sess.breakCh != nil {
-				sess.breakCh <- true
-				ok = true
-			}
-			req.Reply(ok, nil)
-			sess.Unlock()
-		default:
-			// TODO: debug log
-			req.Reply(false, nil)
 		}
+
 	}
+}
+
+// KeepAliveRequestHandler replies to periodic client keep-alive requests:
+// client: send packet: type 80 (SSH_MSG_GLOBAL_REQUEST)
+// client: receive packet: type 82 (SSH_MSG_REQUEST_SUCCESS)
+func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
+	keepAlive := ctx.KeepAlive()
+	if keepAlive != nil {
+		ctx.KeepAlive().RequestHandlerCallback()
+	}
+	return false, nil
 }

@@ -241,9 +241,9 @@ func TestPty(t *testing.T) {
 
 func TestPtyResize(t *testing.T) {
 	t.Parallel()
-	winch0 := Window{40, 80}
-	winch1 := Window{80, 160}
-	winch2 := Window{20, 40}
+	winch0 := Window{Width: 40, Height: 80}
+	winch1 := Window{Width: 80, Height: 160}
+	winch2 := Window{Width: 20, Height: 40}
 	winches := make(chan Window)
 	done := make(chan bool)
 	session, _, cleanup := newTestSession(t, &Server{
@@ -252,8 +252,8 @@ func TestPtyResize(t *testing.T) {
 			if !isPty {
 				t.Fatalf("expected pty but none requested")
 			}
-			if ptyReq.Window != winch0 {
-				t.Fatalf("expected window %#v but got %#v", winch0, ptyReq.Window)
+			if ptyReq.Window.Width != winch0.Width || ptyReq.Window.Height != winch0.Height {
+				t.Fatalf("expected window %dx%d but got %dx%d", winch0.Width, winch0.Height, ptyReq.Window.Width, ptyReq.Window.Height)
 			}
 			for win := range winCh {
 				winches <- win
@@ -270,28 +270,28 @@ func TestPtyResize(t *testing.T) {
 		t.Fatalf("expected nil but got %v", err)
 	}
 	gotWinch := <-winches
-	if gotWinch != winch0 {
-		t.Fatalf("expected window %#v but got %#v", winch0, gotWinch)
+	if gotWinch.Width != winch0.Width || gotWinch.Height != winch0.Height {
+		t.Fatalf("expected window %dx%d but got %dx%d", winch0.Width, winch0.Height, gotWinch.Width, gotWinch.Height)
 	}
-	// winch1
-	winchMsg := struct{ w, h uint32 }{uint32(winch1.Width), uint32(winch1.Height)}
+	// winch1 — RFC 4254 §6.7: window-change sends cols, rows, xpixel, ypixel
+	winchMsg := struct{ W, H, Xpix, Ypix uint32 }{uint32(winch1.Width), uint32(winch1.Height), 0, 0}
 	ok, err := session.SendRequest("window-change", true, gossh.Marshal(&winchMsg))
 	if err == nil && !ok {
 		t.Fatalf("unexpected error or bad reply on send request")
 	}
 	gotWinch = <-winches
-	if gotWinch != winch1 {
-		t.Fatalf("expected window %#v but got %#v", winch1, gotWinch)
+	if gotWinch.Width != winch1.Width || gotWinch.Height != winch1.Height {
+		t.Fatalf("expected window %dx%d but got %dx%d", winch1.Width, winch1.Height, gotWinch.Width, gotWinch.Height)
 	}
 	// winch2
-	winchMsg = struct{ w, h uint32 }{uint32(winch2.Width), uint32(winch2.Height)}
+	winchMsg = struct{ W, H, Xpix, Ypix uint32 }{uint32(winch2.Width), uint32(winch2.Height), 0, 0}
 	ok, err = session.SendRequest("window-change", true, gossh.Marshal(&winchMsg))
 	if err == nil && !ok {
 		t.Fatalf("unexpected error or bad reply on send request")
 	}
 	gotWinch = <-winches
-	if gotWinch != winch2 {
-		t.Fatalf("expected window %#v but got %#v", winch2, gotWinch)
+	if gotWinch.Width != winch2.Width || gotWinch.Height != winch2.Height {
+		t.Fatalf("expected window %dx%d but got %dx%d", winch2.Width, winch2.Height, gotWinch.Width, gotWinch.Height)
 	}
 	session.Close()
 	<-done

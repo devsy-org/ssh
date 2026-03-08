@@ -47,8 +47,11 @@ type KeyboardInteractiveHandler func(ctx Context, challenger gossh.KeyboardInter
 // PtyCallback is a hook for allowing PTY sessions.
 type PtyCallback func(ctx Context, pty Pty) bool
 
-// X11ForwardingCallback is a hook for allowing X11 forwarding (x11-req)
-type X11ForwardingCallback func(ctx Context, x11 X11) bool
+// X11Callback is a hook for allowing X11 forwarding.
+type X11Callback func(ctx Context, x11 X11) bool
+
+// X11ForwardingCallback is an alias for backward compatibility.
+type X11ForwardingCallback = X11Callback
 
 // SessionRequestCallback is a callback for allowing or denying SSH sessions.
 type SessionRequestCallback func(sess Session, requestType string) bool
@@ -79,17 +82,45 @@ type ServerConfigCallback func(ctx Context) *gossh.ServerConfig
 // Please note: the net.Conn is likely to be closed at this point
 type ConnectionFailedCallback func(conn net.Conn, err error)
 
+// ConnectionCompleteCallback is a hook for reporting connections that
+// complete. The included error is from the underlying SSH transport
+// protocol mux (golang.org/x/crypto/ssh), and is non-nil, even for
+// normal termination.
+//
+// Please note: the ServerConn is closed at this point
+type ConnectionCompleteCallback func(conn *gossh.ServerConn, err error)
+
 // Window represents the size of a PTY window.
+//
+// See https://datatracker.ietf.org/doc/html/rfc4254#section-6.2
+//
+// Zero dimension parameters MUST be ignored. The character/row dimensions
+// override the pixel dimensions (when nonzero). Pixel dimensions refer
+// to the drawable area of the window.
 type Window struct {
-	Width  int
+	// Width is the number of columns.
+	Width int
+	// Height is the number of rows.
 	Height int
+	// WidthPixels is the drawable width of the window, in pixels.
+	WidthPixels int
+	// HeightPixels is the drawable height of the window, in pixels.
+	HeightPixels int
 }
 
 // Pty represents a PTY request and configuration.
 type Pty struct {
-	Term   string
+	// Term is the TERM environment variable value.
+	Term string
+	// Window is the Window sent as part of the pty-req.
 	Window Window
-	// HELP WANTED: terminal modes!
+	// Modes represent a mapping of Terminal Mode opcode to value as it was
+	// requested by the client as part of the pty-req. These are outlined as
+	// part of https://datatracker.ietf.org/doc/html/rfc4254#section-8.
+	//
+	// The opcodes are defined as constants in golang.org/x/crypto/ssh (VINTR,VQUIT,etc.).
+	// Boolean opcodes have values 0 or 1.
+	Modes gossh.TerminalModes
 }
 
 // X11 represents an X11 forwarding request and configuration.

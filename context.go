@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"net"
 	"sync"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -55,6 +56,10 @@ var (
 	// ContextKeyPublicKey is a context key for use with Contexts in this package.
 	// The associated value will be of type PublicKey.
 	ContextKeyPublicKey = &contextKey{"public-key"}
+
+	// ContextKeyKeepAlive is a context key for use with Contexts in this package.
+	// The associated value will be of type *SessionKeepAlive.
+	ContextKeyKeepAlive = &contextKey{"keep-alive"}
 )
 
 // Context is a package specific context interface. It exposes connection
@@ -87,6 +92,9 @@ type Context interface {
 	// Permissions returns the Permissions object used for this connection.
 	Permissions() *Permissions
 
+	// KeepAlive returns the SessionKeepAlive object used for checking the status of a user connection.
+	KeepAlive() *SessionKeepAlive
+
 	// SetValue allows you to easily write new values into the underlying context.
 	SetValue(key, value interface{})
 }
@@ -105,8 +113,11 @@ func newContext(srv *Server) (*sshContext, context.CancelFunc) {
 	return ctx, cancel
 }
 
-// this is separate from newContext because we will get ConnMetadata
-// at different points so it needs to be applied separately
+func applyKeepAlive(ctx Context, clientAliveInterval time.Duration, clientAliveCountMax int) {
+	keepAlive := NewSessionKeepAlive(clientAliveInterval, clientAliveCountMax)
+	ctx.SetValue(ContextKeyKeepAlive, keepAlive)
+}
+
 func applyConnMetadata(ctx Context, conn gossh.ConnMetadata) {
 	if ctx.Value(ContextKeySessionID) != nil {
 		return
@@ -152,4 +163,8 @@ func (ctx *sshContext) LocalAddr() net.Addr {
 
 func (ctx *sshContext) Permissions() *Permissions {
 	return ctx.Value(ContextKeyPermissions).(*Permissions)
+}
+
+func (ctx *sshContext) KeepAlive() *SessionKeepAlive {
+	return ctx.Value(ContextKeyKeepAlive).(*SessionKeepAlive)
 }

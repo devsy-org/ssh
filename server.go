@@ -21,7 +21,9 @@ var DefaultSubsystemHandlers = map[string]SubsystemHandler{}
 
 type RequestHandler func(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte)
 
-var DefaultRequestHandlers = map[string]RequestHandler{}
+var DefaultRequestHandlers = map[string]RequestHandler{
+	keepAliveRequestType: KeepAliveRequestHandler,
+}
 
 type ChannelHandler func(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context)
 
@@ -42,7 +44,7 @@ type Server struct {
 	PasswordHandler               PasswordHandler               // password authentication handler
 	PublicKeyHandler              PublicKeyHandler              // public key authentication handler
 	PtyCallback                   PtyCallback                   // callback for allowing PTY sessions, allows all if nil
-	X11ForwardingCallback         X11ForwardingCallback         // callback for allowing X11 display forwarding (x11-req), denies all if nil
+	X11ForwardingCallback         X11Callback                   // callback for allowing X11 display forwarding (x11-req), denies all if nil
 	ConnCallback                  ConnCallback                  // optional callback for wrapping net.Conn before handling
 	LocalPortForwardingCallback   LocalPortForwardingCallback   // callback for allowing local port forwarding, denies all if nil
 	LocalUnixForwardingCallback   LocalUnixForwardingCallback   // callback for allowing local unix forwarding (direct-streamlocal@openssh.com), denies all if nil
@@ -51,7 +53,10 @@ type Server struct {
 	ServerConfigCallback          ServerConfigCallback          // callback for configuring detailed SSH options
 	SessionRequestCallback        SessionRequestCallback        // callback for allowing or denying SSH sessions
 
-	ConnectionFailedCallback ConnectionFailedCallback // callback to report connection failures
+	// server calls Failed callback for connections that fail initial handshake, and Complete callback for those that
+	// succeed, never both.
+	ConnectionFailedCallback   ConnectionFailedCallback   // callback to report connection failures
+	ConnectionCompleteCallback ConnectionCompleteCallback // callback to report connection completion
 
 	IdleTimeout time.Duration // connection timeout when no activity, none if empty
 	MaxTimeout  time.Duration // absolute connection timeout, none if empty
@@ -69,6 +74,9 @@ type Server struct {
 	// SubsystemHandlers are handlers which are similar to the usual SSH command
 	// handlers, but handle named subsystems.
 	SubsystemHandlers map[string]SubsystemHandler
+
+	ClientAliveInterval time.Duration
+	ClientAliveCountMax int
 
 	listenerWg sync.WaitGroup
 	mu         sync.RWMutex
@@ -224,6 +232,10 @@ func (srv *Server) Shutdown(ctx context.Context) error {
 //
 // Serve always returns a non-nil error.
 func (srv *Server) Serve(l net.Listener) error {
+	if (srv.ClientAliveInterval != 0 && srv.ClientAliveCountMax == 0) || (srv.ClientAliveInterval == 0 && srv.ClientAliveCountMax != 0) {
+		return fmt.Errorf("ClientAliveInterval and ClientAliveCountMax must be set together")
+	}
+
 	srv.ensureHandlers()
 	defer l.Close()
 	if err := srv.ensureHostSigner(); err != nil {
@@ -288,12 +300,19 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 		}
 		return
 	}
+	if srv.ConnectionCompleteCallback != nil {
+		defer func() {
+			srv.ConnectionCompleteCallback(sshConn, sshConn.Wait())
+		}()
+	}
 
 	srv.trackConn(sshConn, true)
 	defer srv.trackConn(sshConn, false)
 
 	ctx.SetValue(ContextKeyConn, sshConn)
 	applyConnMetadata(ctx, sshConn)
+	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
+	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
 	//go gossh.DiscardRequests(reqs)
 	go srv.handleRequests(ctx, reqs)
 	for ch := range chans {
