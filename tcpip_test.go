@@ -38,8 +38,8 @@ func newTestSessionWithForwarding(
 	l := sampleTCPSocketServer()
 
 	_, client, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {},
-		LocalPortForwardingCallback: func(ctx Context, destinationHost string, destinationPort uint32) bool {
+		Handler: func(_ Session) {},
+		LocalPortForwardingCallback: func(_ Context, destinationHost string, destinationPort uint32) bool {
 			addr := net.JoinHostPort(destinationHost, strconv.FormatInt(int64(destinationPort), 10))
 			if addr != l.Addr().String() {
 				panic("unexpected destinationHost: " + addr)
@@ -92,8 +92,8 @@ func TestReverseTCPForwardingWorks(t *testing.T) {
 	t.Parallel()
 
 	_, client, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {},
-		ReversePortForwardingCallback: func(ctx Context, bindHost string, bindPort uint32) bool {
+		Handler: func(_ Session) {},
+		ReversePortForwardingCallback: func(_ Context, bindHost string, bindPort uint32) bool {
 			if bindHost != "127.0.0.1" {
 				panic("unexpected bindHost: " + bindHost)
 			}
@@ -153,8 +153,8 @@ func TestReverseTCPForwardingRespectsCallback(t *testing.T) {
 
 	var called int64
 	_, client, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {},
-		ReversePortForwardingCallback: func(ctx Context, bindHost string, bindPort uint32) bool {
+		Handler: func(_ Session) {},
+		ReversePortForwardingCallback: func(_ Context, bindHost string, bindPort uint32) bool {
 			atomic.AddInt64(&called, 1)
 			if bindHost != "127.0.0.1" {
 				panic("unexpected bindHost: " + bindHost)

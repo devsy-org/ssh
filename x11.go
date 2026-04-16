@@ -17,6 +17,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
+// X11 forwarding constants.
 const (
 	x11ChannelType = "x11"
 
@@ -30,6 +31,7 @@ type x11ChannelData struct {
 	OriginPort uint32
 }
 
+// XAuthority represents an X11 authentication entry.
 type XAuthority struct {
 	Family    uint16
 	AddrLen   uint16

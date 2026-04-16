@@ -42,6 +42,7 @@ func HostKeyFile(filepath string) Option {
 	}
 }
 
+// KeyboardInteractiveAuth returns a functional option that sets KeyboardInteractiveHandler on the server.
 func KeyboardInteractiveAuth(fn KeyboardInteractiveHandler) Option {
 	return func(srv *Server) error {
 		srv.KeyboardInteractiveHandler = fn
@@ -68,7 +69,7 @@ func HostKeyPEM(bytes []byte) Option {
 // denying PTY requests.
 func NoPty() Option {
 	return func(srv *Server) error {
-		srv.PtyCallback = func(ctx Context, pty Pty) bool {
+		srv.PtyCallback = func(_ Context, _ Pty) bool {
 			return false
 		}
 		return nil
@@ -79,7 +80,7 @@ func NoPty() Option {
 // denying X11 forwarding requests.
 func NoX11Forwarding() Option {
 	return func(srv *Server) error {
-		srv.X11ForwardingCallback = func(ctx Context, x11 X11) bool {
+		srv.X11ForwardingCallback = func(_ Context, _ X11) bool {
 			return false
 		}
 		return nil

@@ -175,7 +175,7 @@ func TestUser(t *testing.T) {
 func TestDefaultExitStatusZero(t *testing.T) {
 	t.Parallel()
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(_ Session) {
 			// noop
 		},
 	}, nil)
@@ -473,7 +473,7 @@ func TestBreakWithoutChanRegistered(t *testing.T) {
 	waitUntilAfterBreakSent := make(chan bool)
 
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(_ Session) {
 			<-waitUntilAfterBreakSent
 		},
 	}, nil)

@@ -28,7 +28,7 @@ func TestPasswordAuth(t *testing.T) {
 	testUser := "testuser"
 	testPass := "testpass"
 	session, _, cleanup := newTestSessionWithOptions(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(_ Session) {
 			// noop
 		},
 	}, &gossh.ClientConfig{
@@ -55,8 +55,8 @@ func TestPasswordAuth(t *testing.T) {
 func TestPasswordAuthBadPass(t *testing.T) {
 	t.Parallel()
 	l := newLocalTCPListener()
-	srv := &Server{Handler: func(s Session) {}}
-	_ = srv.SetOption(PasswordAuth(func(ctx Context, password string) bool {
+	srv := &Server{Handler: func(_ Session) {}}
+	_ = srv.SetOption(PasswordAuth(func(_ Context, _ string) bool {
 		return false
 	}))
 	go func() { _ = srv.serveOnce(l) }()
@@ -89,7 +89,7 @@ func TestConnWrapping(t *testing.T) {
 	t.Parallel()
 	var wrapped *wrappedConn
 	session, _, cleanup := newTestSessionWithOptions(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(_ Session) {
 			// nothing
 		},
 	}, &gossh.ClientConfig{
@@ -98,9 +98,9 @@ func TestConnWrapping(t *testing.T) {
 			gossh.Password("testpass"),
 		},
 		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
-	}, PasswordAuth(func(ctx Context, password string) bool {
+	}, PasswordAuth(func(_ Context, _ string) bool {
 		return true
-	}), WrapConn(func(ctx Context, conn net.Conn) net.Conn {
+	}), WrapConn(func(_ Context, conn net.Conn) net.Conn {
 		wrapped = &wrappedConn{conn, 0}
 		return wrapped
 	}))

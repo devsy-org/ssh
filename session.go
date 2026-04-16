@@ -106,6 +106,7 @@ type Session interface {
 // when there is no signal channel specified.
 const maxSigBufSize = 128
 
+// DefaultSessionHandler is the default handler for SSH session channels.
 func DefaultSessionHandler(
 	srv *Server,
 	conn *gossh.ServerConn,
@@ -488,8 +489,8 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 // client: receive packet: type 82 (SSH_MSG_REQUEST_SUCCESS)
 func KeepAliveRequestHandler(
 	ctx Context,
-	srv *Server,
-	req *gossh.Request,
+	_ *Server,
+	_ *gossh.Request,
 ) (ok bool, payload []byte) {
 	keepAlive := ctx.KeepAlive()
 	if keepAlive != nil {

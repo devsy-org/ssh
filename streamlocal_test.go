@@ -74,8 +74,8 @@ func newTestSessionWithUnixForwarding(
 	l := sampleUnixSocketServer(t)
 
 	_, client, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {},
-		LocalUnixForwardingCallback: func(ctx Context, socketPath string) bool {
+		Handler: func(_ Session) {},
+		LocalUnixForwardingCallback: func(_ Context, socketPath string) bool {
 			if socketPath != l.Addr().String() {
 				panic("unexpected socket path: " + socketPath)
 			}
@@ -129,8 +129,8 @@ func TestReverseUnixForwardingWorks(t *testing.T) {
 	remoteSocketPath := filepath.Join(tempDirUnixSocket(t), "remote.sock")
 
 	_, client, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {},
-		ReverseUnixForwardingCallback: func(ctx Context, socketPath string) bool {
+		Handler: func(_ Session) {},
+		ReverseUnixForwardingCallback: func(_ Context, socketPath string) bool {
 			if socketPath != remoteSocketPath {
 				panic("unexpected socket path: " + socketPath)
 			}
@@ -184,8 +184,8 @@ func TestReverseUnixForwardingRespectsCallback(t *testing.T) {
 
 	var called int64
 	_, client, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {},
-		ReverseUnixForwardingCallback: func(ctx Context, socketPath string) bool {
+		Handler: func(_ Session) {},
+		ReverseUnixForwardingCallback: func(_ Context, socketPath string) bool {
 			atomic.AddInt64(&called, 1)
 			if socketPath != remoteSocketPath {
 				panic("unexpected socket path: " + socketPath)

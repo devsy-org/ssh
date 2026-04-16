@@ -15,18 +15,24 @@ import (
 // and ListenAndServeTLS methods after a call to Shutdown or Close.
 var ErrServerClosed = errors.New("ssh: Server closed")
 
+// SubsystemHandler is a callback for handling SSH subsystem requests.
 type SubsystemHandler func(s Session)
 
+// DefaultSubsystemHandlers is the default set of subsystem handlers.
 var DefaultSubsystemHandlers = map[string]SubsystemHandler{}
 
+// RequestHandler is a callback for handling global SSH requests.
 type RequestHandler func(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte)
 
+// DefaultRequestHandlers is the default set of global request handlers.
 var DefaultRequestHandlers = map[string]RequestHandler{
 	keepAliveRequestType: KeepAliveRequestHandler,
 }
 
+// ChannelHandler is a callback for handling SSH channel requests.
 type ChannelHandler func(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context)
 
+// DefaultChannelHandlers is the default set of channel handlers.
 var DefaultChannelHandlers = map[string]ChannelHandler{
 	"session": DefaultSessionHandler,
 }
@@ -265,8 +271,8 @@ func (srv *Server) Serve(l net.Listener) error {
 				} else {
 					tempDelay *= 2
 				}
-				if max := 1 * time.Second; tempDelay > max {
-					tempDelay = max
+				if maxDelay := 1 * time.Second; tempDelay > maxDelay {
+					tempDelay = maxDelay
 				}
 				time.Sleep(tempDelay)
 				continue
@@ -277,6 +283,7 @@ func (srv *Server) Serve(l net.Listener) error {
 	}
 }
 
+// HandleConn serves an SSH connection on the given net.Conn.
 func (srv *Server) HandleConn(newConn net.Conn) {
 	ctx, cancel := newContext(srv)
 	if srv.ConnCallback != nil {

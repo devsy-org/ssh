@@ -83,7 +83,7 @@ func TestServerShutdown(t *testing.T) {
 func TestServerClose(t *testing.T) {
 	l := newLocalTCPListener()
 	s := &Server{
-		Handler: func(s Session) {
+		Handler: func(_ Session) {
 			time.Sleep(5 * time.Second)
 		},
 	}

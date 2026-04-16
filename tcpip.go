@@ -28,7 +28,7 @@ type localForwardChannelData struct {
 // ChannelHandlers under direct-tcpip.
 func DirectTCPIPHandler(
 	srv *Server,
-	conn *gossh.ServerConn,
+	_ *gossh.ServerConn,
 	newChan gossh.NewChannel,
 	ctx Context,
 ) {
@@ -92,6 +92,7 @@ type ForwardedTCPHandler struct {
 	sync.Mutex
 }
 
+// HandleSSHRequest handles tcpip-forward and cancel-tcpip-forward requests.
 func (h *ForwardedTCPHandler) HandleSSHRequest(
 	ctx Context,
 	srv *Server,

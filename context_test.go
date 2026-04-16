@@ -13,7 +13,7 @@ func TestSetPermissions(t *testing.T) {
 				t.Fatalf("got %#v; want %#v", s.Permissions().Extensions, permsExt)
 			}
 		},
-	}, nil, PasswordAuth(func(ctx Context, password string) bool {
+	}, nil, PasswordAuth(func(ctx Context, _ string) bool {
 		ctx.Permissions().Extensions = permsExt
 		return true
 	}))
@@ -36,7 +36,7 @@ func TestSetValue(t *testing.T) {
 				t.Fatalf("got %#v; want %#v", v, value)
 			}
 		},
-	}, nil, PasswordAuth(func(ctx Context, password string) bool {
+	}, nil, PasswordAuth(func(ctx Context, _ string) bool {
 		ctx.SetValue(key, value)
 		return true
 	}))

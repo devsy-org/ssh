@@ -98,6 +98,7 @@ type ForwardedUnixHandler struct {
 	forwards map[string]net.Listener
 }
 
+// HandleSSHRequest handles streamlocal-forward and cancel-streamlocal-forward requests.
 func (h *ForwardedUnixHandler) HandleSSHRequest(
 	ctx Context,
 	srv *Server,
