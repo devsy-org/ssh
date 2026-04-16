@@ -31,15 +31,24 @@ type directStreamLocalChannelData struct {
 //
 // Unix socket support on Windows is not widely available, so this handler may
 // not work on all Windows installations and is not tested on Windows.
-func DirectStreamLocalHandler(srv *Server, _ *gossh.ServerConn, newChan gossh.NewChannel, ctx Context) {
+func DirectStreamLocalHandler(
+	srv *Server,
+	_ *gossh.ServerConn,
+	newChan gossh.NewChannel,
+	ctx Context,
+) {
 	var d directStreamLocalChannelData
 	err := gossh.Unmarshal(newChan.ExtraData(), &d)
 	if err != nil {
-		_ = newChan.Reject(gossh.ConnectionFailed, "error parsing direct-streamlocal data: "+err.Error())
+		_ = newChan.Reject(
+			gossh.ConnectionFailed,
+			"error parsing direct-streamlocal data: "+err.Error(),
+		)
 		return
 	}
 
-	if srv.LocalUnixForwardingCallback == nil || !srv.LocalUnixForwardingCallback(ctx, d.SocketPath) {
+	if srv.LocalUnixForwardingCallback == nil ||
+		!srv.LocalUnixForwardingCallback(ctx, d.SocketPath) {
 		newChan.Reject(gossh.Prohibited, "unix forwarding is disabled")
 		return
 	}
@@ -47,7 +56,10 @@ func DirectStreamLocalHandler(srv *Server, _ *gossh.ServerConn, newChan gossh.Ne
 	var dialer net.Dialer
 	dconn, err := dialer.DialContext(ctx, "unix", d.SocketPath)
 	if err != nil {
-		_ = newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("dial unix socket %q: %+v", d.SocketPath, err.Error()))
+		_ = newChan.Reject(
+			gossh.ConnectionFailed,
+			fmt.Sprintf("dial unix socket %q: %+v", d.SocketPath, err.Error()),
+		)
 		return
 	}
 
@@ -86,7 +98,11 @@ type ForwardedUnixHandler struct {
 	forwards map[string]net.Listener
 }
 
-func (h *ForwardedUnixHandler) HandleSSHRequest(ctx Context, srv *Server, req *gossh.Request) (bool, []byte) {
+func (h *ForwardedUnixHandler) HandleSSHRequest(
+	ctx Context,
+	srv *Server,
+	req *gossh.Request,
+) (bool, []byte) {
 	h.Lock()
 	if h.forwards == nil {
 		h.forwards = make(map[string]net.Listener)
@@ -107,7 +123,8 @@ func (h *ForwardedUnixHandler) HandleSSHRequest(ctx Context, srv *Server, req *g
 			return false, nil
 		}
 
-		if srv.ReverseUnixForwardingCallback == nil || !srv.ReverseUnixForwardingCallback(ctx, reqPayload.SocketPath) {
+		if srv.ReverseUnixForwardingCallback == nil ||
+			!srv.ReverseUnixForwardingCallback(ctx, reqPayload.SocketPath) {
 			return false, []byte("unix forwarding is disabled")
 		}
 
@@ -122,7 +139,7 @@ func (h *ForwardedUnixHandler) HandleSSHRequest(ctx Context, srv *Server, req *g
 
 		// Create socket parent dir if not exists.
 		parentDir := filepath.Dir(addr)
-		err = os.MkdirAll(parentDir, 0755)
+		err = os.MkdirAll(parentDir, 0o755)
 		if err != nil {
 			// TODO: log mkdir failure
 			return false, nil

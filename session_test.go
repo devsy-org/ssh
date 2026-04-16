@@ -48,7 +48,11 @@ func newLocalTCPListener() net.Listener {
 	return l
 }
 
-func newClientSession(t *testing.T, addr string, config *gossh.ClientConfig) (*gossh.Session, *gossh.Client, func()) {
+func newClientSession(
+	t *testing.T,
+	addr string,
+	config *gossh.ClientConfig,
+) (*gossh.Session, *gossh.Client, func()) {
 	if config == nil {
 		config = &gossh.ClientConfig{
 			User: "testuser",
@@ -74,7 +78,11 @@ func newClientSession(t *testing.T, addr string, config *gossh.ClientConfig) (*g
 	}
 }
 
-func newTestSession(t *testing.T, srv *Server, cfg *gossh.ClientConfig) (*gossh.Session, *gossh.Client, func()) {
+func newTestSession(
+	t *testing.T,
+	srv *Server,
+	cfg *gossh.ClientConfig,
+) (*gossh.Session, *gossh.Client, func()) {
 	l := newLocalTCPListener()
 	go srv.serveOnce(l)
 	return newClientSession(t, l.Addr().String(), cfg)
@@ -155,7 +163,12 @@ func TestUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(stdout.Bytes(), testUser) {
-		t.Fatalf("stdout = %#v; want %#v given user = %#v", stdout.Bytes(), testUser, string(testUser))
+		t.Fatalf(
+			"stdout = %#v; want %#v given user = %#v",
+			stdout.Bytes(),
+			testUser,
+			string(testUser),
+		)
 	}
 }
 
@@ -253,7 +266,13 @@ func TestPtyResize(t *testing.T) {
 				t.Fatalf("expected pty but none requested")
 			}
 			if ptyReq.Window.Width != winch0.Width || ptyReq.Window.Height != winch0.Height {
-				t.Fatalf("expected window %dx%d but got %dx%d", winch0.Width, winch0.Height, ptyReq.Window.Width, ptyReq.Window.Height)
+				t.Fatalf(
+					"expected window %dx%d but got %dx%d",
+					winch0.Width,
+					winch0.Height,
+					ptyReq.Window.Width,
+					ptyReq.Window.Height,
+				)
 			}
 			for win := range winCh {
 				winches <- win
@@ -263,7 +282,12 @@ func TestPtyResize(t *testing.T) {
 	}, nil)
 	defer cleanup()
 	// winch0
-	if err := session.RequestPty("xterm", winch0.Height, winch0.Width, gossh.TerminalModes{}); err != nil {
+	if err := session.RequestPty(
+		"xterm",
+		winch0.Height,
+		winch0.Width,
+		gossh.TerminalModes{},
+	); err != nil {
 		t.Fatalf("expected nil but got %v", err)
 	}
 	if err := session.Shell(); err != nil {
@@ -271,7 +295,13 @@ func TestPtyResize(t *testing.T) {
 	}
 	gotWinch := <-winches
 	if gotWinch.Width != winch0.Width || gotWinch.Height != winch0.Height {
-		t.Fatalf("expected window %dx%d but got %dx%d", winch0.Width, winch0.Height, gotWinch.Width, gotWinch.Height)
+		t.Fatalf(
+			"expected window %dx%d but got %dx%d",
+			winch0.Width,
+			winch0.Height,
+			gotWinch.Width,
+			gotWinch.Height,
+		)
 	}
 	// winch1 — RFC 4254 §6.7: window-change sends cols, rows, xpixel, ypixel
 	winchMsg := struct{ W, H, Xpix, Ypix uint32 }{uint32(winch1.Width), uint32(winch1.Height), 0, 0}
@@ -281,7 +311,13 @@ func TestPtyResize(t *testing.T) {
 	}
 	gotWinch = <-winches
 	if gotWinch.Width != winch1.Width || gotWinch.Height != winch1.Height {
-		t.Fatalf("expected window %dx%d but got %dx%d", winch1.Width, winch1.Height, gotWinch.Width, gotWinch.Height)
+		t.Fatalf(
+			"expected window %dx%d but got %dx%d",
+			winch1.Width,
+			winch1.Height,
+			gotWinch.Width,
+			gotWinch.Height,
+		)
 	}
 	// winch2
 	winchMsg = struct{ W, H, Xpix, Ypix uint32 }{uint32(winch2.Width), uint32(winch2.Height), 0, 0}
@@ -291,7 +327,13 @@ func TestPtyResize(t *testing.T) {
 	}
 	gotWinch = <-winches
 	if gotWinch.Width != winch2.Width || gotWinch.Height != winch2.Height {
-		t.Fatalf("expected window %dx%d but got %dx%d", winch2.Width, winch2.Height, gotWinch.Width, gotWinch.Height)
+		t.Fatalf(
+			"expected window %dx%d but got %dx%d",
+			winch2.Width,
+			winch2.Height,
+			gotWinch.Width,
+			gotWinch.Height,
+		)
 	}
 	session.Close()
 	<-done

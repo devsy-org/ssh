@@ -130,7 +130,7 @@ func NewX11Forwarder(request X11) (net.Listener, *os.File, error) {
 				return nil, nil, err
 			}
 
-			err = os.WriteFile(xauthFile.Name(), buf, 0600)
+			err = os.WriteFile(xauthFile.Name(), buf, 0o600)
 			if err != nil {
 				ln.Close()
 				os.Remove(xauthFile.Name())

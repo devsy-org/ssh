@@ -22,7 +22,9 @@ type Signer interface {
 
 // ParseAuthorizedKey parses a public key from an authorized_keys file used in
 // OpenSSH according to the sshd(8) manual page.
-func ParseAuthorizedKey(in []byte) (out PublicKey, comment string, options []string, rest []byte, err error) {
+func ParseAuthorizedKey(
+	in []byte,
+) (out PublicKey, comment string, options []string, rest []byte, err error) {
 	return gossh.ParseAuthorizedKey(in)
 }
 

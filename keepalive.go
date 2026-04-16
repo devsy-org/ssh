@@ -21,7 +21,10 @@ type SessionKeepAlive struct {
 }
 
 // NewSessionKeepAlive creates a new SessionKeepAlive.
-func NewSessionKeepAlive(clientAliveInterval time.Duration, clientAliveCountMax int) *SessionKeepAlive {
+func NewSessionKeepAlive(
+	clientAliveInterval time.Duration,
+	clientAliveCountMax int,
+) *SessionKeepAlive {
 	var t *time.Ticker
 	var tickerCh <-chan time.Time
 	if clientAliveInterval > 0 {
@@ -78,7 +81,8 @@ func (ska *SessionKeepAlive) TimeIsUp() bool {
 	ska.m.Lock()
 	defer ska.m.Unlock()
 
-	return ska.lastReceived.Add(time.Duration(ska.clientAliveCountMax) * ska.clientAliveInterval).Before(time.Now())
+	return ska.lastReceived.Add(time.Duration(ska.clientAliveCountMax) * ska.clientAliveInterval).
+		Before(time.Now())
 }
 
 // Close stops the keep-alive ticker.

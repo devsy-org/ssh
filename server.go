@@ -137,7 +137,8 @@ func (srv *Server) config(ctx Context) *gossh.ServerConfig {
 	for _, signer := range srv.HostSigners {
 		config.AddHostKey(signer)
 	}
-	if srv.PasswordHandler == nil && srv.PublicKeyHandler == nil && srv.KeyboardInteractiveHandler == nil {
+	if srv.PasswordHandler == nil && srv.PublicKeyHandler == nil &&
+		srv.KeyboardInteractiveHandler == nil {
 		config.NoClientAuth = true
 	}
 	if srv.Version != "" {
@@ -232,7 +233,8 @@ func (srv *Server) Shutdown(ctx context.Context) error {
 //
 // Serve always returns a non-nil error.
 func (srv *Server) Serve(l net.Listener) error {
-	if (srv.ClientAliveInterval != 0 && srv.ClientAliveCountMax == 0) || (srv.ClientAliveInterval == 0 && srv.ClientAliveCountMax != 0) {
+	if (srv.ClientAliveInterval != 0 && srv.ClientAliveCountMax == 0) ||
+		(srv.ClientAliveInterval == 0 && srv.ClientAliveCountMax != 0) {
 		return fmt.Errorf("ClientAliveInterval and ClientAliveCountMax must be set together")
 	}
 
@@ -313,7 +315,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	applyConnMetadata(ctx, sshConn)
 	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
 	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
-	//go gossh.DiscardRequests(reqs)
+	// go gossh.DiscardRequests(reqs)
 	go srv.handleRequests(ctx, reqs)
 	for ch := range chans {
 		handler := srv.ChannelHandlers[ch.ChannelType()]
@@ -390,8 +392,8 @@ func (srv *Server) SetOption(option Option) error {
 	// internal method. We can't actually lock here because if something calls
 	// (as an example) AddHostKey, it will deadlock.
 
-	//srv.mu.Lock()
-	//defer srv.mu.Unlock()
+	// srv.mu.Lock()
+	// defer srv.mu.Unlock()
 
 	return option(srv)
 }

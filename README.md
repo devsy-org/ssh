@@ -1,10 +1,10 @@
 # gliderlabs/ssh
 
-[![GoDoc](https://godoc.org/github.com/gliderlabs/ssh?status.svg)](https://godoc.org/github.com/gliderlabs/ssh) 
+[![GoDoc](https://godoc.org/github.com/gliderlabs/ssh?status.svg)](https://godoc.org/github.com/gliderlabs/ssh)
 [![CircleCI](https://img.shields.io/circleci/project/github/gliderlabs/ssh.svg)](https://circleci.com/gh/gliderlabs/ssh)
-[![Go Report Card](https://goreportcard.com/badge/github.com/gliderlabs/ssh)](https://goreportcard.com/report/github.com/gliderlabs/ssh) 
+[![Go Report Card](https://goreportcard.com/badge/github.com/gliderlabs/ssh)](https://goreportcard.com/report/github.com/gliderlabs/ssh)
 [![OpenCollective](https://opencollective.com/ssh/sponsors/badge.svg)](#sponsors)
-[![Slack](http://slack.gliderlabs.com/badge.svg)](http://slack.gliderlabs.com) 
+[![Slack](http://slack.gliderlabs.com/badge.svg)](http://slack.gliderlabs.com)
 [![Email Updates](https://img.shields.io/badge/updates-subscribe-yellow.svg)](https://app.convertkit.com/landing_pages/243312)
 
 > The Glider Labs SSH server package is dope.  &mdash;[@bradfitz](https://twitter.com/bradfitz), Go team member
@@ -26,7 +26,7 @@ building SSH servers. The goal of the API was to make it as simple as using
  func main() {
      ssh.Handle(func(s ssh.Session) {
          io.WriteString(s, "Hello world\n")
-     })  
+     })
 
      log.Fatal(ssh.ListenAndServe(":2222", nil))
  }

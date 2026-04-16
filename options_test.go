@@ -9,7 +9,12 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
-func newTestSessionWithOptions(t *testing.T, srv *Server, cfg *gossh.ClientConfig, options ...Option) (*gossh.Session, *gossh.Client, func()) {
+func newTestSessionWithOptions(
+	t *testing.T,
+	srv *Server,
+	cfg *gossh.ClientConfig,
+	options ...Option,
+) (*gossh.Session, *gossh.Client, func()) {
 	for _, option := range options {
 		if err := srv.SetOption(option); err != nil {
 			t.Fatal(err)

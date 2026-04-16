@@ -31,7 +31,10 @@ func sampleTCPSocketServer() net.Listener {
 	return l
 }
 
-func newTestSessionWithForwarding(t *testing.T, forwardingEnabled bool) (net.Listener, *gossh.Client, func()) {
+func newTestSessionWithForwarding(
+	t *testing.T,
+	forwardingEnabled bool,
+) (net.Listener, *gossh.Client, func()) {
 	l := sampleTCPSocketServer()
 
 	_, client, cleanup := newTestSession(t, &Server{

@@ -67,7 +67,10 @@ func sampleUnixSocketServer(t *testing.T) net.Listener {
 	return l
 }
 
-func newTestSessionWithUnixForwarding(t *testing.T, forwardingEnabled bool) (net.Listener, *gossh.Client, func()) {
+func newTestSessionWithUnixForwarding(
+	t *testing.T,
+	forwardingEnabled bool,
+) (net.Listener, *gossh.Client, func()) {
 	l := sampleUnixSocketServer(t)
 
 	_, client, cleanup := newTestSession(t, &Server{

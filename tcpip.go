@@ -26,14 +26,20 @@ type localForwardChannelData struct {
 
 // DirectTCPIPHandler can be enabled by adding it to the server's
 // ChannelHandlers under direct-tcpip.
-func DirectTCPIPHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context) {
+func DirectTCPIPHandler(
+	srv *Server,
+	conn *gossh.ServerConn,
+	newChan gossh.NewChannel,
+	ctx Context,
+) {
 	d := localForwardChannelData{}
 	if err := gossh.Unmarshal(newChan.ExtraData(), &d); err != nil {
 		newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
 		return
 	}
 
-	if srv.LocalPortForwardingCallback == nil || !srv.LocalPortForwardingCallback(ctx, d.DestAddr, d.DestPort) {
+	if srv.LocalPortForwardingCallback == nil ||
+		!srv.LocalPortForwardingCallback(ctx, d.DestAddr, d.DestPort) {
 		newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
 		return
 	}
@@ -86,7 +92,11 @@ type ForwardedTCPHandler struct {
 	sync.Mutex
 }
 
-func (h *ForwardedTCPHandler) HandleSSHRequest(ctx Context, srv *Server, req *gossh.Request) (bool, []byte) {
+func (h *ForwardedTCPHandler) HandleSSHRequest(
+	ctx Context,
+	srv *Server,
+	req *gossh.Request,
+) (bool, []byte) {
 	h.Lock()
 	if h.forwards == nil {
 		h.forwards = make(map[string]net.Listener)
@@ -100,7 +110,8 @@ func (h *ForwardedTCPHandler) HandleSSHRequest(ctx Context, srv *Server, req *go
 			// TODO: log parse failure
 			return false, []byte{}
 		}
-		if srv.ReversePortForwardingCallback == nil || !srv.ReversePortForwardingCallback(ctx, reqPayload.BindAddr, reqPayload.BindPort) {
+		if srv.ReversePortForwardingCallback == nil ||
+			!srv.ReversePortForwardingCallback(ctx, reqPayload.BindAddr, reqPayload.BindPort) {
 			return false, []byte("port forwarding is disabled")
 		}
 		addr := net.JoinHostPort(reqPayload.BindAddr, strconv.Itoa(int(reqPayload.BindPort)))

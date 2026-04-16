@@ -106,7 +106,12 @@ type Session interface {
 // when there is no signal channel specified
 const maxSigBufSize = 128
 
-func DefaultSessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context) {
+func DefaultSessionHandler(
+	srv *Server,
+	conn *gossh.ServerConn,
+	newChan gossh.NewChannel,
+	ctx Context,
+) {
 	ch, reqs, err := newChan.Accept()
 	if err != nil {
 		// TODO: trigger event callback
@@ -326,7 +331,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 					continue
 				}
 
-				var payload = struct{ Value string }{}
+				payload := struct{ Value string }{}
 				gossh.Unmarshal(req.Payload, &payload)
 				sess.rawCmd = payload.Value
 
@@ -351,7 +356,7 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 					continue
 				}
 
-				var payload = struct{ Value string }{}
+				payload := struct{ Value string }{}
 				gossh.Unmarshal(req.Payload, &payload)
 				sess.subsystem = payload.Value
 
@@ -477,14 +482,17 @@ func (sess *session) handleRequests(ctx Context, reqs <-chan *gossh.Request) {
 				req.Reply(false, nil)
 			}
 		}
-
 	}
 }
 
 // KeepAliveRequestHandler replies to periodic client keep-alive requests:
 // client: send packet: type 80 (SSH_MSG_GLOBAL_REQUEST)
 // client: receive packet: type 82 (SSH_MSG_REQUEST_SUCCESS)
-func KeepAliveRequestHandler(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
+func KeepAliveRequestHandler(
+	ctx Context,
+	srv *Server,
+	req *gossh.Request,
+) (ok bool, payload []byte) {
 	keepAlive := ctx.KeepAlive()
 	if keepAlive != nil {
 		ctx.KeepAlive().RequestHandlerCallback()
