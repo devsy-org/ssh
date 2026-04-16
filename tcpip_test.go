@@ -3,7 +3,7 @@ package ssh
 import (
 	"bytes"
 	"context"
-	"io/ioutil"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -24,8 +24,8 @@ func sampleTCPSocketServer() net.Listener {
 		if err != nil {
 			return
 		}
-		conn.Write(sampleServerResponse)
-		conn.Close()
+		_, _ = conn.Write(sampleServerResponse)
+		_ = conn.Close()
 	}()
 
 	return l
@@ -50,7 +50,7 @@ func newTestSessionWithForwarding(
 
 	return l, client, func() {
 		cleanup()
-		l.Close()
+		_ = l.Close()
 	}
 }
 
@@ -64,7 +64,7 @@ func TestLocalPortForwardingWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error connecting to %v: %v", l.Addr().String(), err)
 	}
-	result, err := ioutil.ReadAll(conn)
+	result, err := io.ReadAll(conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,14 +109,14 @@ func TestReverseTCPForwardingWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to listen on a random TCP port over SSH: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
 			return
 		}
-		conn.Write(sampleServerResponse)
-		conn.Close()
+		_, _ = conn.Write(sampleServerResponse)
+		_ = conn.Close()
 	}()
 
 	// Dial the listener that should've been created by the server.
@@ -124,7 +124,7 @@ func TestReverseTCPForwardingWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error connecting to %v: %v", l.Addr().String(), err)
 	}
-	result, err := ioutil.ReadAll(conn)
+	result, err := io.ReadAll(conn)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -36,7 +36,7 @@ func TestPasswordAuth(t *testing.T) {
 		Auth: []gossh.AuthMethod{
 			gossh.Password(testPass),
 		},
-		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
 	}, PasswordAuth(func(ctx Context, password string) bool {
 		if ctx.User() != testUser {
 			t.Fatalf("user = %#v; want %#v", ctx.User(), testUser)
@@ -56,16 +56,16 @@ func TestPasswordAuthBadPass(t *testing.T) {
 	t.Parallel()
 	l := newLocalTCPListener()
 	srv := &Server{Handler: func(s Session) {}}
-	srv.SetOption(PasswordAuth(func(ctx Context, password string) bool {
+	_ = srv.SetOption(PasswordAuth(func(ctx Context, password string) bool {
 		return false
 	}))
-	go srv.serveOnce(l)
+	go func() { _ = srv.serveOnce(l) }()
 	_, err := gossh.Dial("tcp", l.Addr().String(), &gossh.ClientConfig{
 		User: "testuser",
 		Auth: []gossh.AuthMethod{
 			gossh.Password("testpass"),
 		},
-		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
 	})
 	if err != nil {
 		if !strings.Contains(err.Error(), "unable to authenticate") {
@@ -81,7 +81,7 @@ type wrappedConn struct {
 
 func (c *wrappedConn) Write(p []byte) (n int, err error) {
 	n, err = c.Conn.Write(p)
-	atomic.AddInt32(&(c.written), int32(n))
+	atomic.AddInt32(&(c.written), int32(n)) //nolint:gosec // test code, overflow not possible
 	return
 }
 
@@ -97,7 +97,7 @@ func TestConnWrapping(t *testing.T) {
 		Auth: []gossh.AuthMethod{
 			gossh.Password("testpass"),
 		},
-		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
 	}, PasswordAuth(func(ctx Context, password string) bool {
 		return true
 	}), WrapConn(func(ctx Context, conn net.Conn) net.Conn {

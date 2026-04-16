@@ -3,7 +3,7 @@ package ssh
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -60,8 +60,8 @@ func sampleUnixSocketServer(t *testing.T) net.Listener {
 		if err != nil {
 			return
 		}
-		conn.Write(sampleServerResponse)
-		conn.Close()
+		_, _ = conn.Write(sampleServerResponse)
+		_ = conn.Close()
 	}()
 
 	return l
@@ -85,7 +85,7 @@ func newTestSessionWithUnixForwarding(
 
 	return l, client, func() {
 		cleanup()
-		l.Close()
+		_ = l.Close()
 	}
 }
 
@@ -99,7 +99,7 @@ func TestLocalUnixForwardingWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error connecting to %v: %v", l.Addr().String(), err)
 	}
-	result, err := ioutil.ReadAll(conn)
+	result, err := io.ReadAll(conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,14 +143,14 @@ func TestReverseUnixForwardingWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to listen on a unix socket over SSH %q: %v", remoteSocketPath, err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
 			return
 		}
-		conn.Write(sampleServerResponse)
-		conn.Close()
+		_, _ = conn.Write(sampleServerResponse)
+		_ = conn.Close()
 	}()
 
 	// Dial the listener that should've been created by the server.
@@ -158,7 +158,7 @@ func TestReverseUnixForwardingWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error connecting to %v: %v", remoteSocketPath, err)
 	}
-	result, err := ioutil.ReadAll(conn)
+	result, err := io.ReadAll(conn)
 	if err != nil {
 		t.Fatal(err)
 	}
