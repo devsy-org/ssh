@@ -73,8 +73,8 @@ func newClientSession(
 		t.Fatal(err)
 	}
 	return session, client, func() {
-		session.Close()
-		client.Close()
+		_ = session.Close()
+		_ = client.Close()
 	}
 }
 
@@ -84,7 +84,7 @@ func newTestSession(
 	cfg *gossh.ClientConfig,
 ) (*gossh.Session, *gossh.Client, func()) {
 	l := newLocalTCPListener()
-	go srv.serveOnce(l)
+	go func() { _ = srv.serveOnce(l) }()
 	return newClientSession(t, l.Addr().String(), cfg)
 }
 
@@ -93,7 +93,7 @@ func TestStdout(t *testing.T) {
 	testBytes := []byte("Hello world\n")
 	session, _, cleanup := newTestSession(t, &Server{
 		Handler: func(s Session) {
-			s.Write(testBytes)
+			_, _ = s.Write(testBytes)
 		},
 	}, nil)
 	defer cleanup()
@@ -112,7 +112,7 @@ func TestStderr(t *testing.T) {
 	testBytes := []byte("Hello world\n")
 	session, _, cleanup := newTestSession(t, &Server{
 		Handler: func(s Session) {
-			s.Stderr().Write(testBytes)
+			_, _ = s.Stderr().Write(testBytes)
 		},
 	}, nil)
 	defer cleanup()
@@ -131,7 +131,7 @@ func TestStdin(t *testing.T) {
 	testBytes := []byte("Hello world\n")
 	session, _, cleanup := newTestSession(t, &Server{
 		Handler: func(s Session) {
-			io.Copy(s, s) // stdin back into stdout
+			_, _ = io.Copy(s, s) // stdin back into stdout
 		},
 	}, nil)
 	defer cleanup()
@@ -151,7 +151,7 @@ func TestUser(t *testing.T) {
 	testUser := []byte("progrium")
 	session, _, cleanup := newTestSession(t, &Server{
 		Handler: func(s Session) {
-			io.WriteString(s, s.User())
+			_, _ = io.WriteString(s, s.User())
 		},
 	}, &gossh.ClientConfig{
 		User: string(testUser),
@@ -190,7 +190,7 @@ func TestExplicitExitStatusZero(t *testing.T) {
 	t.Parallel()
 	session, _, cleanup := newTestSession(t, &Server{
 		Handler: func(s Session) {
-			s.Exit(0)
+			_ = s.Exit(0)
 		},
 	}, nil)
 	defer cleanup()
@@ -204,7 +204,7 @@ func TestExitStatusNonZero(t *testing.T) {
 	t.Parallel()
 	session, _, cleanup := newTestSession(t, &Server{
 		Handler: func(s Session) {
-			s.Exit(1)
+			_ = s.Exit(1)
 		},
 	}, nil)
 	defer cleanup()
@@ -335,7 +335,7 @@ func TestPtyResize(t *testing.T) {
 			gotWinch.Height,
 		)
 	}
-	session.Close()
+	_ = session.Close()
 	<-done
 }
 
@@ -381,8 +381,8 @@ func TestSignals(t *testing.T) {
 	defer cleanup()
 
 	go func() {
-		session.Signal(gossh.SIGINT)
-		session.Signal(gossh.SIGKILL)
+		_ = session.Signal(gossh.SIGINT)
+		_ = session.Signal(gossh.SIGKILL)
 	}()
 
 	go func() {
@@ -417,7 +417,7 @@ func TestBreakWithChanRegistered(t *testing.T) {
 
 			select {
 			case <-breakChan:
-				io.WriteString(s, "break")
+				_, _ = io.WriteString(s, "break")
 			case <-doneChan:
 				errChan <- fmt.Errorf("Unexpected done")
 				return
