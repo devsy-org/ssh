@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/loft-sh/ssh"
+	"github.com/skevetter/ssh"
 	"github.com/creack/pty"
 )
 

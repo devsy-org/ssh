@@ -1,0 +1,22 @@
+version: "2"
+run:
+  timeout: 5m
+  concurrency: 8
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - goimports
+    - golines
+linters:
+  enable:
+    - errcheck
+    - gocritic
+    - godot
+    - gosec
+    - misspell
+    - revive
+    - staticcheck
+    - unparam
+    - unused
+    - whitespace

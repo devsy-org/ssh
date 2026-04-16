@@ -4,7 +4,7 @@ import (
 	"io"
 	"io/ioutil"
 
-	"github.com/loft-sh/ssh"
+	"github.com/skevetter/ssh"
 )
 
 func ExampleListenAndServe() {

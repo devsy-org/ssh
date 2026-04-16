@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 
-	"github.com/loft-sh/ssh"
+	"github.com/skevetter/ssh"
 	"github.com/pkg/sftp"
 )
 
