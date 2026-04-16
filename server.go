@@ -195,7 +195,7 @@ func (srv *Server) Close() error {
 	srv.closeDoneChanLocked()
 	err := srv.closeListenersLocked()
 	for c := range srv.conns {
-		c.Close()
+		_ = c.Close()
 		delete(srv.conns, c)
 	}
 	return err
@@ -239,7 +239,7 @@ func (srv *Server) Serve(l net.Listener) error {
 	}
 
 	srv.ensureHandlers()
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	if err := srv.ensureHostSigner(); err != nil {
 		return err
 	}
@@ -258,7 +258,8 @@ func (srv *Server) Serve(l net.Listener) error {
 				return ErrServerClosed
 			default:
 			}
-			if ne, ok := e.(net.Error); ok && ne.Temporary() {
+			if ne, ok := e.(net.Error); ok &&
+				ne.Temporary() { //nolint:staticcheck // classic accept-loop backoff pattern
 				if tempDelay == 0 {
 					tempDelay = 5 * time.Millisecond
 				} else {
@@ -281,7 +282,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	if srv.ConnCallback != nil {
 		cbConn := srv.ConnCallback(ctx, newConn)
 		if cbConn == nil {
-			newConn.Close()
+			_ = newConn.Close()
 			return
 		}
 		newConn = cbConn
@@ -294,7 +295,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	if srv.MaxTimeout > 0 {
 		conn.maxDeadline = time.Now().Add(srv.MaxTimeout)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	sshConn, chans, reqs, err := gossh.NewServerConn(conn, srv.config(ctx))
 	if err != nil {
 		if srv.ConnectionFailedCallback != nil {
@@ -323,7 +324,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 			handler = srv.ChannelHandlers["default"]
 		}
 		if handler == nil {
-			ch.Reject(gossh.UnknownChannelType, "unsupported channel type")
+			_ = ch.Reject(gossh.UnknownChannelType, "unsupported channel type")
 			continue
 		}
 		go handler(srv, sshConn, ch, ctx)
@@ -337,13 +338,13 @@ func (srv *Server) handleRequests(ctx Context, in <-chan *gossh.Request) {
 			handler = srv.RequestHandlers["default"]
 		}
 		if handler == nil {
-			req.Reply(false, nil)
+			_ = req.Reply(false, nil)
 			continue
 		}
 		/*reqCtx, cancel := context.WithCancel(ctx)
 		defer cancel() */
 		ret, payload := handler(ctx, srv, req)
-		req.Reply(ret, payload)
+		_ = req.Reply(ret, payload)
 	}
 }
 
