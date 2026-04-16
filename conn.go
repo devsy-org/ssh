@@ -45,11 +45,11 @@ func (c *serverConn) updateDeadline() {
 	case c.idleTimeout > 0:
 		idleDeadline := time.Now().Add(c.idleTimeout)
 		if idleDeadline.Unix() < c.maxDeadline.Unix() || c.maxDeadline.IsZero() {
-			c.Conn.SetDeadline(idleDeadline)
+			_ = c.Conn.SetDeadline(idleDeadline)
 			return
 		}
 		fallthrough
 	default:
-		c.Conn.SetDeadline(c.maxDeadline)
+		_ = c.Conn.SetDeadline(c.maxDeadline)
 	}
 }
