@@ -19,7 +19,7 @@ const (
 )
 
 // contextKeyAgentRequest is an internal context key for storing if the
-// client requested agent forwarding
+// client requested agent forwarding.
 var contextKeyAgentRequest = &contextKey{"auth-agent-req"}
 
 // SetAgentRequested sets up the session context so that AgentRequested
@@ -62,23 +62,23 @@ func ForwardAgentConnections(l net.Listener, s Session) {
 			return
 		}
 		go func(conn net.Conn) {
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			channel, reqs, err := sshConn.OpenChannel(agentChannelType, nil)
 			if err != nil {
 				return
 			}
-			defer channel.Close()
+			defer func() { _ = channel.Close() }()
 			go gossh.DiscardRequests(reqs)
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
-				io.Copy(conn, channel)
-				conn.(*net.UnixConn).CloseWrite()
+				_, _ = io.Copy(conn, channel)
+				_ = conn.(*net.UnixConn).CloseWrite()
 				wg.Done()
 			}()
 			go func() {
-				io.Copy(channel, conn)
-				channel.CloseWrite()
+				_, _ = io.Copy(channel, conn)
+				_ = channel.CloseWrite()
 				wg.Done()
 			}()
 			wg.Wait()
