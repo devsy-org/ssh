@@ -2,9 +2,6 @@ module github.com/skevetter/ssh
 
 go 1.25
 
-require (
-	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be
-	golang.org/x/crypto v0.46.0
-)
+require golang.org/x/crypto v0.46.0
 
 require golang.org/x/sys v0.39.0 // indirect
