@@ -125,15 +125,15 @@ func NewX11Forwarder(request X11) (net.Listener, *os.File, error) {
 		if err == nil {
 			buf, err := prepareXAuthority(request, X11DisplayOffset+i)
 			if err != nil {
-				ln.Close()
-				os.Remove(xauthFile.Name())
+				_ = ln.Close()
+				_ = os.Remove(xauthFile.Name())
 				return nil, nil, err
 			}
 
 			err = os.WriteFile(xauthFile.Name(), buf, 0o600)
 			if err != nil {
-				ln.Close()
-				os.Remove(xauthFile.Name())
+				_ = ln.Close()
+				_ = os.Remove(xauthFile.Name())
 				return nil, nil, err
 			}
 
@@ -142,14 +142,14 @@ func NewX11Forwarder(request X11) (net.Listener, *os.File, error) {
 		log.Println(err)
 	}
 
-	os.Remove(xauthFile.Name())
+	_ = os.Remove(xauthFile.Name())
 	return nil, nil, err
 }
 
 // ForwardX11Connections takes X11 connections from a listener and proxies them
 // through the SSH tunnel to the client's DISPLAY.
 func ForwardX11Connections(l net.Listener, xauth *os.File, s Session) {
-	defer os.Remove(xauth.Name())
+	defer func() { _ = os.Remove(xauth.Name()) }()
 	sshConn := s.Context().Value(ContextKeyConn).(gossh.Conn)
 	for {
 		conn, err := l.Accept()
@@ -157,31 +157,31 @@ func ForwardX11Connections(l net.Listener, xauth *os.File, s Session) {
 			return
 		}
 		go func(conn net.Conn) {
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			originAddr, originPortStr, _ := net.SplitHostPort(conn.RemoteAddr().String())
 			originPort, _ := strconv.Atoi(originPortStr)
 			payload := gossh.Marshal(&x11ChannelData{
 				OriginAddr: originAddr,
-				OriginPort: uint32(originPort),
+				OriginPort: uint32(originPort), //nolint:gosec // port from net.SplitHostPort
 			})
 			channel, reqs, err := sshConn.OpenChannel(x11ChannelType, payload)
 			if err != nil {
 				return
 			}
-			defer channel.Close()
+			defer func() { _ = channel.Close() }()
 			go gossh.DiscardRequests(reqs)
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
-				io.Copy(conn, channel)
+				_, _ = io.Copy(conn, channel)
 				if tcpConn, ok := conn.(*net.TCPConn); ok {
-					tcpConn.CloseWrite()
+					_ = tcpConn.CloseWrite()
 				}
 				wg.Done()
 			}()
 			go func() {
-				io.Copy(channel, conn)
-				channel.CloseWrite()
+				_, _ = io.Copy(channel, conn)
+				_ = channel.CloseWrite()
 				wg.Done()
 			}()
 			wg.Wait()

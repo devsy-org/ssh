@@ -61,25 +61,25 @@ type SessionRequestCallback func(sess Session, requestType string) bool
 // the net.Conn that will be used as the underlying connection.
 type ConnCallback func(ctx Context, conn net.Conn) net.Conn
 
-// LocalPortForwardingCallback is a hook for allowing port forwarding
+// LocalPortForwardingCallback is a hook for allowing port forwarding.
 type LocalPortForwardingCallback func(ctx Context, destinationHost string, destinationPort uint32) bool
 
-// LocalUnixForwardingCallback is a hook for allowing unix forwarding
-// (direct-streamlocal@openssh.com)
+// LocalUnixForwardingCallback is a hook for allowing unix forwarding.
+// (direct-streamlocal@openssh.com).
 type LocalUnixForwardingCallback func(ctx Context, socketPath string) bool
 
-// ReversePortForwardingCallback is a hook for allowing reverse port forwarding
+// ReversePortForwardingCallback is a hook for allowing reverse port forwarding.
 type ReversePortForwardingCallback func(ctx Context, bindHost string, bindPort uint32) bool
 
 // ReverseUnixForwardingCallback is a hook for allowing reverse unix forwarding
 // (streamlocal-forward@openssh.com).
 type ReverseUnixForwardingCallback func(ctx Context, socketPath string) bool
 
-// ServerConfigCallback is a hook for creating custom default server configs
+// ServerConfigCallback is a hook for creating custom default server configs.
 type ServerConfigCallback func(ctx Context) *gossh.ServerConfig
 
-// ConnectionFailedCallback is a hook for reporting failed connections
-// Please note: the net.Conn is likely to be closed at this point
+// ConnectionFailedCallback is a hook for reporting failed connections.
+// Please note: the net.Conn is likely to be closed at this point.
 type ConnectionFailedCallback func(conn net.Conn, err error)
 
 // ConnectionCompleteCallback is a hook for reporting connections that
@@ -87,7 +87,7 @@ type ConnectionFailedCallback func(conn net.Conn, err error)
 // protocol mux (golang.org/x/crypto/ssh), and is non-nil, even for
 // normal termination.
 //
-// Please note: the ServerConn is closed at this point
+// Please note: the ServerConn is closed at this point.
 type ConnectionCompleteCallback func(conn *gossh.ServerConn, err error)
 
 // Window represents the size of a PTY window.

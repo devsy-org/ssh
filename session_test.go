@@ -62,7 +62,7 @@ func newClientSession(
 		}
 	}
 	if config.HostKeyCallback == nil {
-		config.HostKeyCallback = gossh.InsecureIgnoreHostKey()
+		config.HostKeyCallback = gossh.InsecureIgnoreHostKey() //nolint:gosec // test code
 	}
 	client, err := gossh.Dial("tcp", addr, config)
 	if err != nil {
@@ -304,7 +304,12 @@ func TestPtyResize(t *testing.T) {
 		)
 	}
 	// winch1 — RFC 4254 §6.7: window-change sends cols, rows, xpixel, ypixel
-	winchMsg := struct{ W, H, Xpix, Ypix uint32 }{uint32(winch1.Width), uint32(winch1.Height), 0, 0}
+	winchMsg := struct{ W, H, Xpix, Ypix uint32 }{
+		uint32(winch1.Width),  //nolint:gosec // test values
+		uint32(winch1.Height), //nolint:gosec // test values
+		0,
+		0,
+	}
 	ok, err := session.SendRequest("window-change", true, gossh.Marshal(&winchMsg))
 	if err == nil && !ok {
 		t.Fatalf("unexpected error or bad reply on send request")
@@ -320,7 +325,12 @@ func TestPtyResize(t *testing.T) {
 		)
 	}
 	// winch2
-	winchMsg = struct{ W, H, Xpix, Ypix uint32 }{uint32(winch2.Width), uint32(winch2.Height), 0, 0}
+	winchMsg = struct{ W, H, Xpix, Ypix uint32 }{
+		uint32(winch2.Width),  //nolint:gosec // test values
+		uint32(winch2.Height), //nolint:gosec // test values
+		0,
+		0,
+	}
 	ok, err = session.SendRequest("window-change", true, gossh.Marshal(&winchMsg))
 	if err == nil && !ok {
 		t.Fatalf("unexpected error or bad reply on send request")

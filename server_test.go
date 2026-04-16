@@ -40,7 +40,7 @@ func TestServerShutdown(t *testing.T) {
 	go func() {
 		err := s.Serve(l)
 		if err != nil && err != ErrServerClosed {
-			t.Error(err) //nolint:staticcheck // best-effort error reporting from goroutine
+			t.Error(err) //nolint:staticcheck // best-effort from goroutine
 		}
 	}()
 	sessDone := make(chan struct{})
@@ -51,7 +51,7 @@ func TestServerShutdown(t *testing.T) {
 		var stdout bytes.Buffer
 		sess.Stdout = &stdout
 		if err := sess.Run(""); err != nil {
-			t.Error(err) //nolint:staticcheck // best-effort error reporting from goroutine
+			t.Error(err) //nolint:staticcheck // best-effort from goroutine
 			return
 		}
 		if !bytes.Equal(stdout.Bytes(), testBytes) {
@@ -64,7 +64,7 @@ func TestServerShutdown(t *testing.T) {
 		defer close(srvDone)
 		err := s.Shutdown(context.Background())
 		if err != nil {
-			t.Error(err) //nolint:staticcheck // best-effort error reporting from goroutine
+			t.Error(err) //nolint:staticcheck // best-effort from goroutine
 		}
 	}()
 
@@ -90,7 +90,7 @@ func TestServerClose(t *testing.T) {
 	go func() {
 		err := s.Serve(l)
 		if err != nil && err != ErrServerClosed {
-			t.Error(err) //nolint:staticcheck // best-effort error reporting from goroutine
+			t.Error(err) //nolint:staticcheck // best-effort from goroutine
 		}
 	}()
 
@@ -103,14 +103,14 @@ func TestServerClose(t *testing.T) {
 		defer close(clientDoneChan)
 		<-closeDoneChan
 		if err := sess.Run(""); err != nil && err != io.EOF {
-			t.Error(err) //nolint:staticcheck // best-effort error reporting from goroutine
+			t.Error(err) //nolint:staticcheck // best-effort from goroutine
 		}
 	}()
 
 	go func() {
 		err := s.Close()
 		if err != nil {
-			t.Error(err) //nolint:staticcheck // best-effort error reporting from goroutine
+			t.Error(err) //nolint:staticcheck // best-effort from goroutine
 		}
 		close(closeDoneChan)
 	}()

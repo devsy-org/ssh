@@ -15,7 +15,7 @@ const (
 	forwardedTCPChannelType = "forwarded-tcpip"
 )
 
-// direct-tcpip data struct as specified in RFC4254, Section 7.2
+// direct-tcpip data struct as specified in RFC4254, Section 7.2.
 type localForwardChannelData struct {
 	DestAddr string
 	DestPort uint32

@@ -120,7 +120,7 @@ func parseWindow(s []byte) (win Window, rem []byte, ok bool) {
 
 func parseString(in []byte) (out string, rem []byte, ok bool) {
 	length, rem, ok := parseUint32(in)
-	if uint32(len(rem)) < length || !ok {
+	if uint32(len(rem)) < length || !ok { //nolint:gosec // length bounded by packet size
 		ok = false
 		return
 	}
