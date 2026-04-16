@@ -1,95 +1,146 @@
-# gliderlabs/ssh
+# skevetter/ssh
 
-[![GoDoc](https://godoc.org/github.com/gliderlabs/ssh?status.svg)](https://godoc.org/github.com/gliderlabs/ssh)
-[![CircleCI](https://img.shields.io/circleci/project/github/gliderlabs/ssh.svg)](https://circleci.com/gh/gliderlabs/ssh)
-[![Go Report Card](https://goreportcard.com/badge/github.com/gliderlabs/ssh)](https://goreportcard.com/report/github.com/gliderlabs/ssh)
-[![OpenCollective](https://opencollective.com/ssh/sponsors/badge.svg)](#sponsors)
-[![Slack](http://slack.gliderlabs.com/badge.svg)](http://slack.gliderlabs.com)
-[![Email Updates](https://img.shields.io/badge/updates-subscribe-yellow.svg)](https://app.convertkit.com/landing_pages/243312)
+[![Go Reference](https://pkg.go.dev/badge/github.com/skevetter/ssh.svg)](https://pkg.go.dev/github.com/skevetter/ssh)
 
-> The Glider Labs SSH server package is dope.  &mdash;[@bradfitz](https://twitter.com/bradfitz), Go team member
+A higher-level Go API for building SSH servers, wrapping
+[golang.org/x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh).
+Designed to feel as simple as `net/http`.
 
-This Go package wraps the [crypto/ssh
-package](https://godoc.org/golang.org/x/crypto/ssh) with a higher-level API for
-building SSH servers. The goal of the API was to make it as simple as using
-[net/http](https://golang.org/pkg/net/http/), so the API is very similar:
+This is a maintained fork of [gliderlabs/ssh](https://github.com/gliderlabs/ssh).
+
+## Quick Start
 
 ```go
- package main
+package main
 
- import (
-     "github.com/gliderlabs/ssh"
-     "io"
-     "log"
- )
+import (
+    "io"
+    "log"
 
- func main() {
-     ssh.Handle(func(s ssh.Session) {
-         io.WriteString(s, "Hello world\n")
-     })
+    "github.com/skevetter/ssh"
+)
 
-     log.Fatal(ssh.ListenAndServe(":2222", nil))
- }
+func main() {
+    ssh.Handle(func(s ssh.Session) {
+        io.WriteString(s, "Hello world\n")
+    })
+
+    log.Fatal(ssh.ListenAndServe(":2222", nil))
+}
+```
+
+## Install
 
 ```
-This package was built by [@progrium](https://twitter.com/progrium) after working on nearly a dozen projects at Glider Labs using SSH and collaborating with [@shazow](https://twitter.com/shazow) (known for [ssh-chat](https://github.com/shazow/ssh-chat)).
+go get github.com/skevetter/ssh
+```
 
-## Examples
+Requires Go 1.25+. The only runtime dependency is `golang.org/x/crypto`.
 
-A bunch of great examples are in the `_examples` directory.
+## Features
+
+- Simple `Handler` / `ListenAndServe` API mirroring `net/http`
+- Password, public key, and keyboard-interactive authentication
+- PTY requests and window-change events
+- Session environment variables, signals, and break requests
+- Local and reverse TCP port forwarding
+- Unix domain socket (streamlocal) forwarding
+- SSH agent forwarding
+- X11 forwarding
+- Subsystem handlers (e.g. SFTP)
+- Keep-alive support
+- Graceful shutdown and connection draining
+- Custom server configuration via `ServerConfigCallback`
 
 ## Usage
 
-[See GoDoc reference.](https://godoc.org/github.com/gliderlabs/ssh)
+### Authentication
+
+```go
+ssh.ListenAndServe(":2222", nil,
+    ssh.PasswordAuth(func(ctx ssh.Context, pass string) bool {
+        return pass == "secret"
+    }),
+)
+```
+
+```go
+ssh.ListenAndServe(":2222", nil,
+    ssh.PublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
+        // compare against allowed key
+        return ssh.KeysEqual(key, allowedKey)
+    }),
+)
+```
+
+### Host Keys
+
+```go
+// From a PEM file
+ssh.ListenAndServe(":2222", nil, ssh.HostKeyFile("/path/to/key"))
+
+// Or configure a Server directly
+srv := &ssh.Server{Addr: ":2222", Handler: handler}
+srv.AddHostKey(signer)
+log.Fatal(srv.ListenAndServe())
+```
+
+If no host key is specified, one is generated at startup (useful for development).
+
+### PTY Handling
+
+```go
+ssh.Handle(func(s ssh.Session) {
+    ptyReq, winCh, isPty := s.Pty()
+    if !isPty {
+        io.WriteString(s, "No PTY requested.\n")
+        s.Exit(1)
+        return
+    }
+    // ptyReq.Term, ptyReq.Window, winCh for resize events
+})
+```
+
+### Port Forwarding
+
+Enable local (direct-tcpip) and reverse (tcpip-forward) port forwarding by
+setting the appropriate callbacks on the server:
+
+```go
+srv := &ssh.Server{
+    Handler: handler,
+    LocalPortForwardingCallback: func(ctx ssh.Context, host string, port uint32) bool {
+        return true // allow all
+    },
+    ReversePortForwardingCallback: func(ctx ssh.Context, host string, port uint32) bool {
+        return true
+    },
+}
+```
+
+## Examples
+
+See the [`_examples`](./_examples) directory for working demos:
+
+| Directory | Description |
+|-----------|-------------|
+| `ssh-simple` | Minimal echo server |
+| `ssh-pty` | PTY with terminal emulation |
+| `ssh-publickey` | Public key authentication |
+| `ssh-remoteforward` | Reverse port forwarding |
+| `ssh-forwardagent` | SSH agent forwarding |
+| `ssh-sftpserver` | SFTP subsystem |
+| `ssh-docker` | Docker-backed SSH sessions |
+| `ssh-timeouts` | Idle and max-deadline timeouts |
+
+## API Reference
+
+[pkg.go.dev/github.com/skevetter/ssh](https://pkg.go.dev/github.com/skevetter/ssh)
 
 ## Contributing
 
-Pull requests are welcome! However, since this project is very much about API
-design, please submit API changes as issues to discuss before submitting PRs.
-
-Also, you can [join our Slack](http://slack.gliderlabs.com) to discuss as well.
-
-## Roadmap
-
-* Non-session channel handlers
-* Cleanup callback API
-* 1.0 release
-* High-level client?
-
-## Sponsors
-
-Become a sponsor and get your logo on our README on Github with a link to your site. [[Become a sponsor](https://opencollective.com/ssh#sponsor)]
-
-<a href="https://opencollective.com/ssh/sponsor/0/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/0/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/1/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/1/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/2/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/2/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/3/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/3/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/4/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/4/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/5/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/5/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/6/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/6/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/7/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/7/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/8/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/8/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/9/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/9/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/10/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/10/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/11/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/11/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/12/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/12/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/13/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/13/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/14/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/14/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/15/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/15/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/16/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/16/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/17/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/17/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/18/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/18/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/19/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/19/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/20/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/20/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/21/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/21/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/22/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/22/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/23/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/23/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/24/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/24/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/25/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/25/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/26/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/26/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/27/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/27/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/28/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/28/avatar.svg"></a>
-<a href="https://opencollective.com/ssh/sponsor/29/website" target="_blank"><img src="https://opencollective.com/ssh/sponsor/29/avatar.svg"></a>
+Pull requests are welcome. For API design changes, please open an issue first
+to discuss.
 
 ## License
 
