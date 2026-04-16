@@ -49,7 +49,7 @@ func DirectStreamLocalHandler(
 
 	if srv.LocalUnixForwardingCallback == nil ||
 		!srv.LocalUnixForwardingCallback(ctx, d.SocketPath) {
-		newChan.Reject(gossh.Prohibited, "unix forwarding is disabled")
+		_ = newChan.Reject(gossh.Prohibited, "unix forwarding is disabled")
 		return
 	}
 
