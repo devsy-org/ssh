@@ -34,13 +34,13 @@ func DirectTCPIPHandler(
 ) {
 	d := localForwardChannelData{}
 	if err := gossh.Unmarshal(newChan.ExtraData(), &d); err != nil {
-		newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
+		_ = newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
 		return
 	}
 
 	if srv.LocalPortForwardingCallback == nil ||
 		!srv.LocalPortForwardingCallback(ctx, d.DestAddr, d.DestPort) {
-		newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
+		_ = newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
 		return
 	}
 
@@ -49,13 +49,13 @@ func DirectTCPIPHandler(
 	var dialer net.Dialer
 	dconn, err := dialer.DialContext(ctx, "tcp", dest)
 	if err != nil {
-		newChan.Reject(gossh.ConnectionFailed, err.Error())
+		_ = newChan.Reject(gossh.ConnectionFailed, err.Error())
 		return
 	}
 
 	ch, reqs, err := newChan.Accept()
 	if err != nil {
-		dconn.Close()
+		_ = dconn.Close()
 		return
 	}
 	go gossh.DiscardRequests(reqs)
@@ -137,7 +137,7 @@ func (h *ForwardedTCPHandler) HandleSSHRequest(
 			ln, ok := h.forwards[addr]
 			h.Unlock()
 			if ok {
-				ln.Close()
+				_ = ln.Close()
 			}
 		}()
 		go func() {
@@ -150,17 +150,19 @@ func (h *ForwardedTCPHandler) HandleSSHRequest(
 				originAddr, orignPortStr, _ := net.SplitHostPort(c.RemoteAddr().String())
 				originPort, _ := strconv.Atoi(orignPortStr)
 				payload := gossh.Marshal(&remoteForwardChannelData{
-					DestAddr:   reqPayload.BindAddr,
-					DestPort:   uint32(destPort),
+					DestAddr: reqPayload.BindAddr,
+					DestPort: uint32( //nolint:gosec // port range validated by net.Listen
+						destPort,
+					),
 					OriginAddr: originAddr,
-					OriginPort: uint32(originPort),
+					OriginPort: uint32(originPort), //nolint:gosec // port from net.SplitHostPort
 				})
 				go func() {
 					ch, reqs, err := conn.OpenChannel(forwardedTCPChannelType, payload)
 					if err != nil {
 						// TODO: log failure to open channel
 						log.Println(err)
-						c.Close()
+						_ = c.Close()
 						return
 					}
 					go gossh.DiscardRequests(reqs)
@@ -171,7 +173,11 @@ func (h *ForwardedTCPHandler) HandleSSHRequest(
 			delete(h.forwards, addr)
 			h.Unlock()
 		}()
-		return true, gossh.Marshal(&remoteForwardSuccess{uint32(destPort)})
+		return true, gossh.Marshal(
+			&remoteForwardSuccess{
+				uint32(destPort), //nolint:gosec // port range validated by net.Listen
+			},
+		)
 
 	case "cancel-tcpip-forward":
 		var reqPayload remoteForwardCancelRequest
@@ -184,7 +190,7 @@ func (h *ForwardedTCPHandler) HandleSSHRequest(
 		ln, ok := h.forwards[addr]
 		h.Unlock()
 		if ok {
-			ln.Close()
+			_ = ln.Close()
 		}
 		return true, nil
 	default:
