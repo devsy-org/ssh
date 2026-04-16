@@ -139,7 +139,7 @@ func (h *ForwardedUnixHandler) HandleSSHRequest(
 
 		// Create socket parent dir if not exists.
 		parentDir := filepath.Dir(addr)
-		err = os.MkdirAll(parentDir, 0o755)
+		err = os.MkdirAll(parentDir, 0o750)
 		if err != nil {
 			// TODO: log mkdir failure
 			return false, nil

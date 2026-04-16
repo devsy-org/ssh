@@ -20,3 +20,10 @@ linters:
     - unparam
     - unused
     - whitespace
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: unused-parameter
+          disabled: true
