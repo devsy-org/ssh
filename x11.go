@@ -45,7 +45,7 @@ type XAuthority struct {
 // isLittleEndian returns whether the host architecture uses little-endian.
 func isLittleEndian() bool {
 	var i int32 = 0x01020304
-	u := unsafe.Pointer(&i)
+	u := unsafe.Pointer(&i) //nolint:gosec // required for endianness detection
 	pb := (*byte)(u)
 	b := *pb
 	return b == 0x04
@@ -68,10 +68,10 @@ func prepareXAuthority(request X11, seat int) ([]byte, error) {
 	family := uint16(syscall.AF_LOCAL)
 	number := strconv.Itoa(seat)
 
-	addrLen := uint16(len(hostname))
-	numberLen := uint16(len(number))
-	nameLen := uint16(len(request.AuthProtocol))
-	dataLen := uint16(len(data))
+	addrLen := uint16(len(hostname))             //nolint:gosec // hostname length fits uint16
+	numberLen := uint16(len(number))             //nolint:gosec // seat number string fits uint16
+	nameLen := uint16(len(request.AuthProtocol)) //nolint:gosec // protocol name fits uint16
+	dataLen := uint16(len(data))                 //nolint:gosec // auth data length fits uint16
 
 	buf := make([]byte, addrLen+numberLen+nameLen+dataLen+10)
 	pos := uint16(0)
