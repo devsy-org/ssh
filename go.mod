@@ -1,4 +1,4 @@
-module github.com/skevetter/ssh
+module github.com/devsy-org/ssh
 
 go 1.25
 
