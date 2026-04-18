@@ -1,6 +1,6 @@
-# skevetter/ssh
+# devsy-org/ssh
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/skevetter/ssh.svg)](https://pkg.go.dev/github.com/skevetter/ssh)
+[![Go Reference](https://pkg.go.dev/badge/github.com/devsy-org/ssh.svg)](https://pkg.go.dev/github.com/devsy-org/ssh)
 
 A higher-level Go API for building SSH servers, wrapping
 [golang.org/x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh).
@@ -17,7 +17,7 @@ import (
     "io"
     "log"
 
-    "github.com/skevetter/ssh"
+    "github.com/devsy-org/ssh"
 )
 
 func main() {
@@ -32,7 +32,7 @@ func main() {
 ## Install
 
 ```
-go get github.com/skevetter/ssh
+go get github.com/devsy-org/ssh
 ```
 
 Requires Go 1.25+. The only runtime dependency is `golang.org/x/crypto`.
@@ -135,7 +135,7 @@ See the [`_examples`](./_examples) directory for working demos:
 
 ## API Reference
 
-[pkg.go.dev/github.com/skevetter/ssh](https://pkg.go.dev/github.com/skevetter/ssh)
+[pkg.go.dev/github.com/devsy-org/ssh](https://pkg.go.dev/github.com/devsy-org/ssh)
 
 ## Contributing
 

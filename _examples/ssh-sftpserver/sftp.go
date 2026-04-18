@@ -7,7 +7,7 @@ import (
 	"log"
 
 	"github.com/pkg/sftp"
-	"github.com/skevetter/ssh"
+	"github.com/devsy-org/ssh"
 )
 
 // SftpHandler handler for SFTP subsystem
