@@ -6,8 +6,8 @@ import (
 	"io/ioutil"
 	"log"
 
-	"github.com/pkg/sftp"
 	"github.com/devsy-org/ssh"
+	"github.com/pkg/sftp"
 )
 
 // SftpHandler handler for SFTP subsystem
