@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -90,8 +91,10 @@ func TestServerShutdown(t *testing.T) {
 func TestConnectionClosingCallback(t *testing.T) {
 	t.Parallel()
 
-	closingFired := make(chan struct{})
-	completeFired := make(chan struct{})
+	// Use a single ordered channel so a regression that swapped the order of
+	// the two callbacks would be caught. Reading from independent channels
+	// with separate timeouts would not detect such a swap.
+	events := make(chan string, 2)
 	var closingCtx atomic.Value // ssh.Context observed at callback time
 
 	srv := &Server{
@@ -100,10 +103,10 @@ func TestConnectionClosingCallback(t *testing.T) {
 		},
 		ConnectionClosingCallback: func(ctx Context, _ *gossh.ServerConn) {
 			closingCtx.Store(ctx)
-			close(closingFired)
+			events <- "closing"
 		},
 		ConnectionCompleteCallback: func(_ *gossh.ServerConn, _ error) {
-			close(completeFired)
+			events <- "complete"
 		},
 	}
 
@@ -117,22 +120,96 @@ func TestConnectionClosingCallback(t *testing.T) {
 	_ = sess.Close()
 	_ = client.Close()
 
-	select {
-	case <-closingFired:
-	case <-time.After(2 * time.Second):
-		t.Fatal("ConnectionClosingCallback did not fire within 2s of client disconnect")
+	readEvent := func() string {
+		select {
+		case ev := <-events:
+			return ev
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for callback event")
+			return ""
+		}
+	}
+
+	if first := readEvent(); first != "closing" {
+		t.Fatalf("expected first event to be \"closing\", got %q", first)
+	}
+	if second := readEvent(); second != "complete" {
+		t.Fatalf("expected second event to be \"complete\", got %q", second)
 	}
 
 	if got := closingCtx.Load(); got == nil {
 		t.Fatal("ConnectionClosingCallback received nil Context")
 	}
+}
 
-	// Complete callback should also fire after closing (Wait returns once
-	// the underlying TCP closes); it should not race ahead of closing.
+// TestConnectionKeepAliveClosesStalledConn is the regression test for the
+// connection-level keep-alive: when a client stops responding to keepalive
+// global requests (e.g., idle ControlMaster whose peer is wedged) and no
+// session is open, the server's connectionKeepAlive goroutine must close
+// sshConn after roughly ClientAliveInterval * ClientAliveCountMax, which
+// unblocks HandleConn's `for ch := range chans` loop and fires
+// ConnectionClosingCallback. Before the fix, the keep-alive was only driven
+// from within an active session, so an idle-but-stuck transport would
+// linger forever.
+//
+// We dial with a raw gossh.NewClientConn and intentionally do NOT reply to
+// the incoming requests channel, simulating a stuck peer. We do not open a
+// session — the bug is specifically about the no-session case.
+func TestConnectionKeepAliveClosesStalledConn(t *testing.T) {
+	t.Parallel()
+
+	closingFired := make(chan struct{})
+
+	srv := &Server{
+		Handler:             func(_ Session) {},
+		ClientAliveInterval: 100 * time.Millisecond,
+		ClientAliveCountMax: 2,
+		ConnectionClosingCallback: func(_ Context, _ *gossh.ServerConn) {
+			close(closingFired)
+		},
+	}
+
+	l := newLocalTCPListener()
+	defer func() { _ = l.Close() }()
+	go func() { _ = srv.serveOnce(l) }()
+
+	cfg := &gossh.ClientConfig{
+		User:            "testuser",
+		Auth:            []gossh.AuthMethod{gossh.Password("testpass")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
+	}
+	netConn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	sshConn, chans, reqs, err := gossh.NewClientConn(netConn, l.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("NewClientConn: %v", err)
+	}
+	defer func() { _ = sshConn.Close() }()
+
+	// Drain both streams WITHOUT replying. By not calling req.Reply on
+	// incoming global requests (including keepalive@openssh.com), we
+	// simulate a stuck peer. The server's SendRequest with wantReply=true
+	// will not see a response and connectionKeepAlive will eventually
+	// close sshConn after ClientAliveCountMax intervals.
+	go func() {
+		for range chans { //nolint:revive // intentional drain
+		}
+	}()
+	go func() {
+		for req := range reqs {
+			_ = req // intentionally never reply
+		}
+	}()
+
+	// 100ms * 2 = 200ms expected; allow generous slack for CI scheduling
+	// and any per-SendRequest timeout the other agent may layer on.
 	select {
-	case <-completeFired:
-	case <-time.After(2 * time.Second):
-		t.Fatal("ConnectionCompleteCallback did not fire")
+	case <-closingFired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ConnectionClosingCallback did not fire; " +
+			"stalled client was not torn down by connection-level keep-alive")
 	}
 }
 

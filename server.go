@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -63,7 +64,7 @@ type Server struct {
 	// succeed, never both.
 	ConnectionFailedCallback   ConnectionFailedCallback   // callback to report connection failures
 	ConnectionCompleteCallback ConnectionCompleteCallback // callback to report connection completion
-	ConnectionClosingCallback  ConnectionClosingCallback  // callback invoked synchronously when the transport begins closing, before sshConn.Wait()
+	ConnectionClosingCallback  ConnectionClosingCallback  // see ConnectionClosingCallback type doc
 
 	IdleTimeout time.Duration // connection timeout when no activity, none if empty
 	MaxTimeout  time.Duration // absolute connection timeout, none if empty
@@ -350,10 +351,11 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 		go handler(srv, sshConn, ch, ctx)
 	}
 
-	// Fire the closing callback synchronously, before any defers (including
-	// ConnectionCompleteCallback's sshConn.Wait()) run. This is the only
-	// hook downstream callers can rely on when the transport is stuck —
-	// Wait() may never return.
+	// Fire the closing callback synchronously, before any deferred cleanup
+	// runs, so downstream callers have a deterministic hook the moment the
+	// channels stream ends. Deferred hooks that block on the transport
+	// (e.g., waiting on the mux) may be delayed indefinitely on a stuck
+	// transport; this path is not.
 	if srv.ConnectionClosingCallback != nil {
 		srv.ConnectionClosingCallback(ctx, sshConn)
 	}
@@ -379,6 +381,7 @@ func (srv *Server) connectionKeepAlive(
 	// Reuse the SessionKeepAlive already stashed on ctx so request-handler
 	// resets (KeepAliveRequestHandler) and metrics keep working.
 	keepAlive := ctx.KeepAlive()
+	defer keepAlive.Close()
 
 	inFlight := make(chan struct{}, 1)
 	for {
@@ -387,7 +390,13 @@ func (srv *Server) connectionKeepAlive(
 			return
 		case <-keepAlive.Ticks():
 			if keepAlive.TimeIsUp() {
-				_ = sshConn.Close()
+				log.Printf(
+					"ssh: connection keep-alive timeout after %d intervals; closing transport",
+					countMax,
+				)
+				if err := sshConn.Close(); err != nil {
+					log.Printf("ssh: failed to close stalled transport: %v", err)
+				}
 				return
 			}
 			select {
@@ -397,10 +406,21 @@ func (srv *Server) connectionKeepAlive(
 			}
 			go func() {
 				defer func() { <-inFlight }()
-				_, _, err := sshConn.SendRequest(keepAliveRequestType, true, nil)
+				replyCh := make(chan error, 1)
+				go func() {
+					_, _, err := sshConn.SendRequest(keepAliveRequestType, true, nil)
+					replyCh <- err
+				}()
 				keepAlive.ServerRequestedKeepAliveCallback()
-				if err == nil {
-					keepAlive.Reset()
+				select {
+				case err := <-replyCh:
+					if err == nil {
+						keepAlive.Reset()
+					} else {
+						log.Printf("ssh: keepalive request failed: %v", err)
+					}
+				case <-time.After(interval):
+					log.Printf("ssh: keepalive request timed out after %s", interval)
 				}
 			}()
 		}
