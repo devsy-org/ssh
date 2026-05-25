@@ -298,20 +298,34 @@ func TestConnectionKeepAliveUsesChannelRequestWhenSessionOpen(t *testing.T) {
 	}
 }
 
-// TestConnectionKeepAlivePrunesClosedChannels verifies that once all
-// channels are closed, the server's connection-level keepalive falls
-// back to global requests rather than retaining stale channel handles
-// from the openChannelSet. Regression test for the case where
-// openChans.any() returned a dead channel because per-channel removal
-// only happened on SendRequest failure.
+// TestConnectionKeepAlivePrunesClosedChannels verifies that the
+// per-channel close hook prunes channels from the openChannelSet as
+// soon as the client closes them, BEFORE the next keepalive probe
+// fires. This is a regression test for the case where openChans.any()
+// returned a dead channel because per-channel removal only happened on
+// SendRequest failure (i.e., one probe was wasted on a dead channel
+// before the prune-on-failure path kicked in).
+//
+// Strategy: use a long ClientAliveInterval (1s) so we can observe the
+// state of openChans in the window between channel close and the first
+// post-close probe. We capture the openChannelSet from inside the
+// session handler so the test can inspect it without exporting helpers.
 func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
 	t.Parallel()
 
+	openChansCh := make(chan *openChannelSet, 1)
 	srv := &Server{
 		Handler: func(s Session) {
-			<-s.Context().Done()
+			ctx := s.Context()
+			if oc, ok := ctx.Value(ContextKeyOpenChannels).(*openChannelSet); ok {
+				select {
+				case openChansCh <- oc:
+				default:
+				}
+			}
+			<-ctx.Done()
 		},
-		ClientAliveInterval: 100 * time.Millisecond,
+		ClientAliveInterval: 1 * time.Second,
 		ClientAliveCountMax: 100, // generous so the conn isn't torn down mid-test
 	}
 
@@ -338,7 +352,7 @@ func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
 		}
 	}()
 
-	var globalCount, channelCount atomic.Int64
+	var globalCount atomic.Int64
 	go func() {
 		for req := range globalReqs {
 			if req.Type == "keepalive@openssh.com" {
@@ -348,9 +362,11 @@ func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
 		}
 	}()
 
-	// Open three channels, drain their request streams (replying to
-	// keepalives so the channel doesn't get rejected), then close them.
+	// Open three sessions so that the server handler runs and registers
+	// channels in openChans. Use a "shell" request so DefaultSessionHandler
+	// considers the session "handled" and our top-level Handler runs.
 	var chReqWg [3]chan struct{}
+	channels := make([]gossh.Channel, 0, 3)
 	for i := 0; i < 3; i++ {
 		ch, chReqs, err := sshConn.OpenChannel("session", nil)
 		if err != nil {
@@ -366,29 +382,70 @@ func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
 				}
 			}
 		}()
+		// Send a shell request to trigger the user Handler so it can
+		// publish openChans into openChansCh.
+		if _, err := ch.SendRequest("shell", true, nil); err != nil {
+			t.Fatalf("shell request[%d]: %v", i, err)
+		}
+		channels = append(channels, ch)
+	}
+
+	// Grab the openChannelSet from the first session that ran.
+	var openChans *openChannelSet
+	select {
+	case openChans = <-openChansCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("never received openChannelSet from handler")
+	}
+
+	// Sanity: all three channels are registered.
+	openChans.mu.Lock()
+	regBefore := len(openChans.chans)
+	openChans.mu.Unlock()
+	if regBefore != 3 {
+		t.Fatalf("expected 3 channels registered before close, got %d", regBefore)
+	}
+
+	// Close all channels.
+	for _, ch := range channels {
 		_ = ch.Close()
 	}
 	for i := 0; i < 3; i++ {
 		<-chReqWg[i]
 	}
 
-	// Allow the server's request-proxy goroutines to observe the channel
-	// closes and prune the openChannelSet.
-	time.Sleep(200 * time.Millisecond)
-
-	beforeGlobal := globalCount.Load()
-	beforeChannel := channelCount.Load()
-	time.Sleep(1 * time.Second)
-	gotChannel := channelCount.Load() - beforeChannel
-	gotGlobal := globalCount.Load() - beforeGlobal
-	if gotChannel != 0 {
+	// Poll for the close hook to drain. ClientAliveInterval is 1s, so we
+	// have ample time to observe the prune BEFORE the next probe fires.
+	// If the close hook works, len(openChans.chans) drops to 0 quickly
+	// (just goroutine scheduling). If the hook is broken, it stays at 3
+	// until the next keepalive tick fires and SendRequest fails.
+	deadline := time.Now().Add(800 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		openChans.mu.Lock()
+		n := len(openChans.chans)
+		openChans.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	openChans.mu.Lock()
+	regAfter := len(openChans.chans)
+	openChans.mu.Unlock()
+	if regAfter != 0 {
 		t.Fatalf(
-			"expected 0 channel-typed keepalives after all channels closed, got %d",
-			gotChannel,
+			"openChannelSet still has %d entries 800ms after close; close hook did not run",
+			regAfter,
 		)
 	}
-	if gotGlobal < 1 {
-		t.Fatalf("expected >=1 global-typed keepalive after all channels closed, got %d", gotGlobal)
+
+	// And verify that the next keepalive probe (which fires ~1s after the
+	// last reset, i.e. shortly after this point) goes out as a global
+	// request — confirming behavior end-to-end.
+	before := globalCount.Load()
+	time.Sleep(1500 * time.Millisecond)
+	if got := globalCount.Load() - before; got < 1 {
+		t.Fatalf("expected >=1 global-typed keepalive after channels closed, got %d", got)
 	}
 }
 

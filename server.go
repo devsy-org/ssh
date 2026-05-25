@@ -64,9 +64,11 @@ func (s *openChannelSet) remove(c gossh.Channel) {
 // keep-alive activity marker.
 type trackingNewChannel struct {
 	gossh.NewChannel
+	set              *openChannelSet
 	onAccept         func(gossh.Channel)
 	onClose          func(gossh.Channel)
 	notePeerActivity func()
+	ctx              Context
 }
 
 // trackingChanReqBuffer matches gossh's per-channel request channel
@@ -91,20 +93,55 @@ func (t *trackingNewChannel) Accept() (gossh.Channel, <-chan *gossh.Request, err
 				t.onClose(ch)
 			}
 		}()
+		// ctxDone may be nil if no ctx was wired in (defensive: keep the
+		// goroutine cancellable on connection teardown without
+		// requiring every caller to plumb ctx). A nil channel blocks
+		// forever in select, which gives the same behavior as a plain
+		// unconditional send if ctx is absent.
+		var ctxDone <-chan struct{}
+		if t.ctx != nil {
+			ctxDone = t.ctx.Done()
+		}
 		for r := range reqs {
 			if t.notePeerActivity != nil {
 				t.notePeerActivity()
 			}
-			wrapped <- r
+			select {
+			case wrapped <- r:
+			case <-ctxDone:
+				// Handler stopped draining and the connection is
+				// going away. Negatively reply to any want-reply
+				// request we were holding, then drain upstream so
+				// gossh's per-channel request goroutine doesn't
+				// leak, replying false to any subsequent
+				// want-reply requests as we go.
+				if r.WantReply {
+					_ = r.Reply(false, nil)
+				}
+				for r2 := range reqs {
+					if r2.WantReply {
+						_ = r2.Reply(false, nil)
+					}
+				}
+				return
+			}
 		}
 	}()
 	return ch, wrapped, nil
 }
 
-// Unwrap returns the underlying gossh.NewChannel. Callers that received a
-// NewChannel via a ChannelHandler and need access to the unwrapped value
-// (e.g., for type assertions against a custom NewChannel implementation)
-// can call this.
+// NewChannelUnwrapper is implemented by NewChannel implementations that
+// wrap another NewChannel for internal bookkeeping. Channel handlers
+// that need access to the underlying gossh.NewChannel (e.g., to type-
+// assert against a custom implementation) can call Unwrap to recover
+// it. This is needed because the library wraps every incoming
+// NewChannel to track per-channel keep-alive activity; the wrapper is
+// otherwise transparent.
+type NewChannelUnwrapper interface {
+	Unwrap() gossh.NewChannel
+}
+
+// Unwrap returns the underlying gossh.NewChannel. See NewChannelUnwrapper.
 func (t *trackingNewChannel) Unwrap() gossh.NewChannel {
 	return t.NewChannel
 }
@@ -169,8 +206,8 @@ type Server struct {
 	// The gossh.NewChannel value passed to handlers may be wrapped by this
 	// package for keep-alive bookkeeping (tracking open channels and noting
 	// inbound activity). Handlers that need access to the unwrapped
-	// underlying value can type-assert to interface{ Unwrap() gossh.NewChannel }
-	// and call Unwrap.
+	// underlying value can type-assert to NewChannelUnwrapper and call
+	// Unwrap.
 	ChannelHandlers map[string]ChannelHandler
 
 	// RequestHandlers allow overriding the server-level request handlers or
@@ -451,6 +488,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 		}
 		tracked := &trackingNewChannel{
 			NewChannel: ch,
+			set:        openChans,
 			onAccept:   openChans.add,
 			onClose:    openChans.remove,
 			notePeerActivity: func() {
@@ -458,6 +496,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 					ka.NotePeerActivity()
 				}
 			},
+			ctx: ctx,
 		}
 		go handler(srv, sshConn, tracked, ctx)
 	}
