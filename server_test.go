@@ -298,6 +298,100 @@ func TestConnectionKeepAliveUsesChannelRequestWhenSessionOpen(t *testing.T) {
 	}
 }
 
+// TestConnectionKeepAlivePrunesClosedChannels verifies that once all
+// channels are closed, the server's connection-level keepalive falls
+// back to global requests rather than retaining stale channel handles
+// from the openChannelSet. Regression test for the case where
+// openChans.any() returned a dead channel because per-channel removal
+// only happened on SendRequest failure.
+func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
+	t.Parallel()
+
+	srv := &Server{
+		Handler: func(s Session) {
+			<-s.Context().Done()
+		},
+		ClientAliveInterval: 100 * time.Millisecond,
+		ClientAliveCountMax: 100, // generous so the conn isn't torn down mid-test
+	}
+
+	l := newLocalTCPListener()
+	defer func() { _ = l.Close() }()
+	go func() { _ = srv.serveOnce(l) }()
+
+	cfg := &gossh.ClientConfig{
+		User:            "testuser",
+		Auth:            []gossh.AuthMethod{gossh.Password("testpass")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
+	}
+	netConn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	sshConn, chans, globalReqs, err := gossh.NewClientConn(netConn, l.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("NewClientConn: %v", err)
+	}
+	defer func() { _ = sshConn.Close() }()
+	go func() {
+		for range chans { //nolint:revive // intentional drain
+		}
+	}()
+
+	var globalCount, channelCount atomic.Int64
+	go func() {
+		for req := range globalReqs {
+			if req.Type == "keepalive@openssh.com" {
+				globalCount.Add(1)
+			}
+			_ = req.Reply(true, nil)
+		}
+	}()
+
+	// Open three channels, drain their request streams (replying to
+	// keepalives so the channel doesn't get rejected), then close them.
+	var chReqWg [3]chan struct{}
+	for i := 0; i < 3; i++ {
+		ch, chReqs, err := sshConn.OpenChannel("session", nil)
+		if err != nil {
+			t.Fatalf("OpenChannel[%d]: %v", i, err)
+		}
+		done := make(chan struct{})
+		chReqWg[i] = done
+		go func() {
+			defer close(done)
+			for req := range chReqs {
+				if req.WantReply {
+					_ = req.Reply(true, nil)
+				}
+			}
+		}()
+		_ = ch.Close()
+	}
+	for i := 0; i < 3; i++ {
+		<-chReqWg[i]
+	}
+
+	// Allow the server's request-proxy goroutines to observe the channel
+	// closes and prune the openChannelSet.
+	time.Sleep(200 * time.Millisecond)
+
+	beforeGlobal := globalCount.Load()
+	beforeChannel := channelCount.Load()
+	time.Sleep(1 * time.Second)
+	gotChannel := channelCount.Load() - beforeChannel
+	gotGlobal := globalCount.Load() - beforeGlobal
+	if gotChannel != 0 {
+		t.Fatalf(
+			"expected 0 channel-typed keepalives after all channels closed, got %d",
+			gotChannel,
+		)
+	}
+	if gotGlobal < 1 {
+		t.Fatalf("expected >=1 global-typed keepalive after all channels closed, got %d", gotGlobal)
+	}
+}
+
 func TestServerClose(t *testing.T) {
 	l := newLocalTCPListener()
 	s := &Server{

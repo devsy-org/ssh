@@ -71,6 +71,21 @@ func (ska *SessionKeepAlive) Reset() {
 	}
 }
 
+// NotePeerActivity marks that traffic was received from the peer. Unlike
+// Reset, it does not bump the KeepAliveReplyReceived metric — it's
+// intended for arbitrary inbound packets, not specifically keepalive
+// replies. The ticker is reset so the next probe fires
+// clientAliveInterval after the most recent activity, matching OpenSSH's
+// last_client_time logic.
+func (ska *SessionKeepAlive) NotePeerActivity() {
+	ska.m.Lock()
+	defer ska.m.Unlock()
+	if ska.ticker != nil && !ska.closed {
+		ska.lastReceived = time.Now()
+		ska.ticker.Reset(ska.clientAliveInterval)
+	}
+}
+
 // Ticks returns the channel that fires on each keep-alive interval.
 func (ska *SessionKeepAlive) Ticks() <-chan time.Time {
 	return ska.tickerCh
