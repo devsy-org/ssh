@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/devsy-org/ssh/compare/v1.1.0...v1.2.0) (2026-05-25)
+
+
+### Features
+
+* add connection-level keepalive and ConnectionClosingCallback ([#4](https://github.com/devsy-org/ssh/issues/4)) ([7fa2baf](https://github.com/devsy-org/ssh/commit/7fa2baf212ae30a7255eb69f34025c3f67040e11))
+
 ## [1.1.0](https://github.com/devsy-org/ssh/compare/v1.0.0...v1.1.0) (2026-04-18)
 
 
