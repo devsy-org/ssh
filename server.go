@@ -465,6 +465,15 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	// callbacks can fire.
 	keepAliveDone := make(chan struct{})
 	go srv.connectionKeepAlive(ctx, sshConn, keepAliveDone)
+	// LIFO: close(keepAliveDone) runs first to signal connectionKeepAlive
+	// to return, then KeepAlive().Close() stops the ticker deterministically.
+	// Without the explicit Close, the ticker keeps firing on a dropped
+	// channel until ctx (held by spawned handler goroutines and the
+	// per-channel forwarder) becomes unreachable and GC reclaims it.
+	// All SessionKeepAlive methods are mutex-protected, so a straggler
+	// goroutine calling notePeerActivity/Reset after Close just sees
+	// closed=true and no-ops on the ticker.
+	defer ctx.KeepAlive().Close()
 	defer close(keepAliveDone)
 
 	// go gossh.DiscardRequests(reqs)
@@ -521,13 +530,9 @@ func (srv *Server) connectionKeepAlive(
 	}
 
 	// Reuse the SessionKeepAlive already stashed on ctx so request-handler
-	// resets (KeepAliveRequestHandler) and metrics keep working.
-	//
-	// Do NOT Close() the SessionKeepAlive when this function returns: other
-	// goroutines (Server.handleRequests, trackingNewChannel.Accept's
-	// forwarder, and any in-flight probe goroutine spawned below) may still
-	// be calling notePeerActivity / Reset after we return. The ticker is
-	// no longer referenced once HandleConn returns and is GC'd.
+	// resets (KeepAliveRequestHandler) and metrics keep working. The ticker
+	// is Stop()ped from HandleConn's defer chain after this goroutine has
+	// been signaled to return.
 	keepAlive := ctx.KeepAlive()
 
 	openChans := ctx.Value(contextKeyOpenChannels).(*openChannelSet)
