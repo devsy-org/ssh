@@ -16,6 +16,60 @@ import (
 // and ListenAndServeTLS methods after a call to Shutdown or Close.
 var ErrServerClosed = errors.New("ssh: Server closed")
 
+// openChannelSet tracks accepted channels for a connection so that
+// connectionKeepAlive can mirror OpenSSH's client_alive_check() behavior:
+// when at least one channel is open, send the keepalive as a channel
+// request on that channel; otherwise fall back to a global request.
+type openChannelSet struct {
+	mu    sync.Mutex
+	chans []gossh.Channel
+}
+
+func (s *openChannelSet) add(c gossh.Channel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chans = append(s.chans, c)
+}
+
+func (s *openChannelSet) any() gossh.Channel {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.chans) == 0 {
+		return nil
+	}
+	return s.chans[0]
+}
+
+func (s *openChannelSet) remove(c gossh.Channel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, ch := range s.chans {
+		if ch == c {
+			s.chans = append(s.chans[:i], s.chans[i+1:]...)
+			return
+		}
+	}
+}
+
+// trackingNewChannel wraps a gossh.NewChannel so that successful Accept
+// calls register the underlying channel with an openChannelSet. The
+// ChannelHandler API receives a gossh.NewChannel and typically calls
+// Accept() inside the handler, so wrapping at HandleConn dispatch time is
+// the only place to observe acceptance for arbitrary external handlers
+// without modifying them.
+type trackingNewChannel struct {
+	gossh.NewChannel
+	onAccept func(gossh.Channel)
+}
+
+func (t *trackingNewChannel) Accept() (gossh.Channel, <-chan *gossh.Request, error) {
+	ch, reqs, err := t.NewChannel.Accept()
+	if err == nil && t.onAccept != nil {
+		t.onAccept(ch)
+	}
+	return ch, reqs, err
+}
+
 // SubsystemHandler is a callback for handling SSH subsystem requests.
 type SubsystemHandler func(s Session)
 
@@ -325,6 +379,8 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	applyConnMetadata(ctx, sshConn)
 	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
 	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
+	openChans := &openChannelSet{}
+	ctx.SetValue(ContextKeyOpenChannels, openChans)
 
 	// Connection-level keep-alive: runs for the lifetime of the transport,
 	// independent of whether any session is active. This is what detects a
@@ -348,7 +404,8 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 			_ = ch.Reject(gossh.UnknownChannelType, "unsupported channel type")
 			continue
 		}
-		go handler(srv, sshConn, ch, ctx)
+		tracked := &trackingNewChannel{NewChannel: ch, onAccept: openChans.add}
+		go handler(srv, sshConn, tracked, ctx)
 	}
 
 	// Fire the closing callback synchronously, before any deferred cleanup
@@ -362,11 +419,12 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 }
 
 // connectionKeepAlive drives transport-level keep-alive pings for the life
-// of sshConn. It uses the gossh global-request channel
-// (sshConn.SendRequest), which works whether or not any session channels
-// exist. After ClientAliveCountMax consecutive intervals with no successful
-// reply, sshConn is closed so HandleConn unblocks. Stops when `done`
-// closes (HandleConn returning).
+// of sshConn. It mirrors OpenSSH's client_alive_check(): if at least one
+// channel is open, the keepalive is sent as a SSH2_MSG_CHANNEL_REQUEST on
+// that channel; otherwise it falls back to a SSH2_MSG_GLOBAL_REQUEST. After
+// ClientAliveCountMax consecutive intervals with no successful reply,
+// sshConn is closed so HandleConn unblocks. Stops when `done` closes
+// (HandleConn returning).
 func (srv *Server) connectionKeepAlive(
 	ctx Context,
 	sshConn *gossh.ServerConn,
@@ -382,6 +440,8 @@ func (srv *Server) connectionKeepAlive(
 	// resets (KeepAliveRequestHandler) and metrics keep working.
 	keepAlive := ctx.KeepAlive()
 	defer keepAlive.Close()
+
+	openChans, _ := ctx.Value(ContextKeyOpenChannels).(*openChannelSet)
 
 	inFlight := make(chan struct{}, 1)
 	for {
@@ -408,7 +468,25 @@ func (srv *Server) connectionKeepAlive(
 				defer func() { <-inFlight }()
 				replyCh := make(chan error, 1)
 				go func() {
-					_, _, err := sshConn.SendRequest(keepAliveRequestType, true, nil)
+					// Mirror OpenSSH client_alive_check(): prefer a channel
+					// request on an open channel; fall back to a global
+					// request if no channel is open or the channel send
+					// fails (channel was closed mid-flight).
+					var err error
+					var ch gossh.Channel
+					if openChans != nil {
+						ch = openChans.any()
+					}
+					if ch != nil {
+						_, err = ch.SendRequest(keepAliveRequestType, true, nil)
+						if err != nil {
+							openChans.remove(ch)
+							ch = nil
+						}
+					}
+					if ch == nil {
+						_, _, err = sshConn.SendRequest(keepAliveRequestType, true, nil)
+					}
 					replyCh <- err
 				}()
 				keepAlive.ServerRequestedKeepAliveCallback()

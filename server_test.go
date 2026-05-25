@@ -213,6 +213,91 @@ func TestConnectionKeepAliveClosesStalledConn(t *testing.T) {
 	}
 }
 
+// TestConnectionKeepAliveUsesChannelRequestWhenSessionOpen verifies that the
+// server's connection-level keepalive mirrors OpenSSH's client_alive_check():
+// while at least one channel is open it sends keepalive@openssh.com as a
+// channel request on that channel; after the channel closes it falls back
+// to a global request.
+func TestConnectionKeepAliveUsesChannelRequestWhenSessionOpen(t *testing.T) {
+	t.Parallel()
+
+	srv := &Server{
+		Handler: func(s Session) {
+			<-s.Context().Done()
+		},
+		ClientAliveInterval: 100 * time.Millisecond,
+		ClientAliveCountMax: 100, // generous so the conn doesn't get torn down mid-test
+	}
+
+	l := newLocalTCPListener()
+	defer func() { _ = l.Close() }()
+	go func() { _ = srv.serveOnce(l) }()
+
+	cfg := &gossh.ClientConfig{
+		User:            "testuser",
+		Auth:            []gossh.AuthMethod{gossh.Password("testpass")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
+	}
+	netConn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	sshConn, chans, globalReqs, err := gossh.NewClientConn(netConn, l.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("NewClientConn: %v", err)
+	}
+	defer func() { _ = sshConn.Close() }()
+	go func() {
+		for range chans { //nolint:revive // intentional drain
+		}
+	}()
+
+	var globalCount, channelCount atomic.Int64
+	go func() {
+		for req := range globalReqs {
+			if req.Type == "keepalive@openssh.com" {
+				globalCount.Add(1)
+			}
+			_ = req.Reply(true, nil)
+		}
+	}()
+
+	ch, chReqs, err := sshConn.OpenChannel("session", nil)
+	if err != nil {
+		t.Fatalf("OpenChannel: %v", err)
+	}
+	chDone := make(chan struct{})
+	go func() {
+		defer close(chDone)
+		for req := range chReqs {
+			if req.Type == "keepalive@openssh.com" {
+				channelCount.Add(1)
+			}
+			if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+		}
+	}()
+
+	// Observe ~10 intervals with the channel open.
+	time.Sleep(1 * time.Second)
+	if got := channelCount.Load(); got < 1 {
+		t.Fatalf("expected >=1 channel-typed keepalive while channel open, got %d", got)
+	}
+	if got := globalCount.Load(); got != 0 {
+		t.Fatalf("expected 0 global-typed keepalives while channel open, got %d", got)
+	}
+
+	// Close the channel and observe the fallback to global requests.
+	_ = ch.Close()
+	<-chDone
+	before := globalCount.Load()
+	time.Sleep(1 * time.Second)
+	if got := globalCount.Load() - before; got < 1 {
+		t.Fatalf("expected >=1 global-typed keepalive after channel close, got %d", got)
+	}
+}
+
 func TestServerClose(t *testing.T) {
 	l := newLocalTCPListener()
 	s := &Server{
