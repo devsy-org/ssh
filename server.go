@@ -530,7 +530,7 @@ func (srv *Server) connectionKeepAlive(
 	// no longer referenced once HandleConn returns and is GC'd.
 	keepAlive := ctx.KeepAlive()
 
-	openChans, _ := ctx.Value(contextKeyOpenChannels).(*openChannelSet)
+	openChans := ctx.Value(contextKeyOpenChannels).(*openChannelSet)
 
 	inFlight := make(chan struct{}, 1)
 	for {
@@ -567,10 +567,7 @@ func (srv *Server) connectionKeepAlive(
 				// hangs forever it will be unblocked when the TimeIsUp
 				// branch closes sshConn.
 				var err error
-				var ch gossh.Channel
-				if openChans != nil {
-					ch = openChans.any()
-				}
+				ch := openChans.any()
 				if ch != nil {
 					_, err = ch.SendRequest(keepAliveRequestType, true, nil)
 					if err != nil {
