@@ -93,15 +93,7 @@ func (t *trackingNewChannel) Accept() (gossh.Channel, <-chan *gossh.Request, err
 				t.onClose(ch)
 			}
 		}()
-		// ctxDone may be nil if no ctx was wired in (defensive: keep the
-		// goroutine cancellable on connection teardown without
-		// requiring every caller to plumb ctx). A nil channel blocks
-		// forever in select, which gives the same behavior as a plain
-		// unconditional send if ctx is absent.
-		var ctxDone <-chan struct{}
-		if t.ctx != nil {
-			ctxDone = t.ctx.Done()
-		}
+		ctxDone := t.ctx.Done()
 		for r := range reqs {
 			if t.notePeerActivity != nil {
 				t.notePeerActivity()

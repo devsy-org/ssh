@@ -306,7 +306,7 @@ func TestConnectionKeepAliveUsesChannelRequestWhenSessionOpen(t *testing.T) {
 // SendRequest failure (i.e., one probe was wasted on a dead channel
 // before the prune-on-failure path kicked in).
 //
-// Strategy: use a long ClientAliveInterval (1s) so we can observe the
+// Strategy: use a long ClientAliveInterval (3s) so we can observe the
 // state of openChans in the window between channel close and the first
 // post-close probe. We capture the openChannelSet from inside the
 // session handler so the test can inspect it without exporting helpers.
@@ -325,7 +325,7 @@ func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
 			}
 			<-ctx.Done()
 		},
-		ClientAliveInterval: 1 * time.Second,
+		ClientAliveInterval: 3 * time.Second,
 		ClientAliveCountMax: 100, // generous so the conn isn't torn down mid-test
 	}
 
@@ -414,12 +414,18 @@ func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
 		<-chReqWg[i]
 	}
 
-	// Poll for the close hook to drain. ClientAliveInterval is 1s, so we
+	// Poll for the close hook to drain. ClientAliveInterval is 3s, so we
 	// have ample time to observe the prune BEFORE the next probe fires.
 	// If the close hook works, len(openChans.chans) drops to 0 quickly
 	// (just goroutine scheduling). If the hook is broken, it stays at 3
 	// until the next keepalive tick fires and SendRequest fails.
-	deadline := time.Now().Add(800 * time.Millisecond)
+	//
+	// We use a 500ms poll deadline — well above goroutine-scheduling
+	// jitter but well below the 3s tick interval. This guarantees the
+	// assertion is unambiguous: it passes ONLY if the close hook ran,
+	// not because a keepalive tick happened to fire and the
+	// prune-on-failure path cleared the set.
+	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		openChans.mu.Lock()
 		n := len(openChans.chans)
@@ -432,18 +438,29 @@ func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
 	openChans.mu.Lock()
 	regAfter := len(openChans.chans)
 	openChans.mu.Unlock()
+	// Invariant: no keepalive tick should have fired during the 500ms
+	// window (interval is 3s). If one did, the test result is
+	// ambiguous — the prune may have happened via the
+	// SendRequest-failure path instead of the close hook.
+	if globalCount.Load() != 0 {
+		t.Fatalf(
+			"keepalive tick fired before assertion window (globalCount=%d); test invalid",
+			globalCount.Load(),
+		)
+	}
 	if regAfter != 0 {
 		t.Fatalf(
-			"openChannelSet still has %d entries 800ms after close; close hook did not run",
+			"openChannelSet still has %d entries 500ms after close; close hook did not run",
 			regAfter,
 		)
 	}
 
-	// And verify that the next keepalive probe (which fires ~1s after the
-	// last reset, i.e. shortly after this point) goes out as a global
-	// request — confirming behavior end-to-end.
+	// And verify that the next keepalive probe (which fires ~3s after the
+	// last reset) goes out as a global request — confirming behavior
+	// end-to-end. Wait 4s to leave room for at least one tick after the
+	// 3s interval.
 	before := globalCount.Load()
-	time.Sleep(1500 * time.Millisecond)
+	time.Sleep(4 * time.Second)
 	if got := globalCount.Load() - before; got < 1 {
 		t.Fatalf("expected >=1 global-typed keepalive after channels closed, got %d", got)
 	}
