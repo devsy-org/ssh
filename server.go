@@ -454,7 +454,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
 	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
 	openChans := &openChannelSet{}
-	ctx.SetValue(ContextKeyOpenChannels, openChans)
+	ctx.SetValue(contextKeyOpenChannels, openChans)
 
 	// Connection-level keep-alive: runs for the lifetime of the transport,
 	// independent of whether any session is active. This is what detects a
@@ -522,10 +522,15 @@ func (srv *Server) connectionKeepAlive(
 
 	// Reuse the SessionKeepAlive already stashed on ctx so request-handler
 	// resets (KeepAliveRequestHandler) and metrics keep working.
+	//
+	// Do NOT Close() the SessionKeepAlive when this function returns: other
+	// goroutines (Server.handleRequests, trackingNewChannel.Accept's
+	// forwarder, and any in-flight probe goroutine spawned below) may still
+	// be calling NotePeerActivity / Reset after we return. The ticker is
+	// no longer referenced once HandleConn returns and is GC'd.
 	keepAlive := ctx.KeepAlive()
-	defer keepAlive.Close()
 
-	openChans, _ := ctx.Value(ContextKeyOpenChannels).(*openChannelSet)
+	openChans, _ := ctx.Value(contextKeyOpenChannels).(*openChannelSet)
 
 	inFlight := make(chan struct{}, 1)
 	for {

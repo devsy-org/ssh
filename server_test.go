@@ -317,7 +317,7 @@ func TestConnectionKeepAlivePrunesClosedChannels(t *testing.T) {
 	srv := &Server{
 		Handler: func(s Session) {
 			ctx := s.Context()
-			if oc, ok := ctx.Value(ContextKeyOpenChannels).(*openChannelSet); ok {
+			if oc, ok := ctx.Value(contextKeyOpenChannels).(*openChannelSet); ok {
 				select {
 				case openChansCh <- oc:
 				default:

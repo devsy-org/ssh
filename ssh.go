@@ -101,6 +101,13 @@ type ConnectionCompleteCallback func(conn *gossh.ServerConn, err error)
 // the wait. The Context is the same one threaded through auth and channel
 // handlers, so per-connection state stashed via ctx.SetValue is reachable
 // without an external sync.Map keyed by *gossh.ServerConn.
+//
+// Note: channel handler goroutines spawned by HandleConn may still be
+// running and mutating per-connection state when this callback fires.
+// The callback is intentionally synchronous and pre-defer; it does NOT
+// imply that all per-connection work has finished. For "all work done"
+// semantics, use ConnectionCompleteCallback (which runs after
+// sshConn.Wait).
 type ConnectionClosingCallback func(ctx Context, conn *gossh.ServerConn)
 
 // Window represents the size of a PTY window.

@@ -71,16 +71,12 @@ func (ska *SessionKeepAlive) Reset() {
 	}
 }
 
-// NotePeerActivity records that inbound traffic was observed from the
-// peer. Like Reset, it bumps lastReceived (which clears the dead-peer
-// deadline used by TimeIsUp) and resets the ticker (suppressing a
-// redundant probe). Unlike Reset, it does NOT bump the
-// KeepAliveReplyReceived metric — that's reserved for actual probe
-// replies. This matches OpenSSH sshd: any successfully-received packet
-// zeros keep_alive_timeouts (packet.c ssh_packet_read_poll_seqnr) and
-// defers the next probe (serverloop.c). The unanswered-probe counter
-// is a function of silence on the wire, not of probe-reply tracking
-// specifically.
+// NotePeerActivity records inbound traffic from the peer. It bumps
+// lastReceived (clearing the dead-peer deadline used by TimeIsUp) and
+// resets the ticker so the next probe fires `interval` after the most
+// recent activity. Matches OpenSSH sshd, which clears keep_alive_timeouts
+// on every successfully-received packet and defers the next probe on
+// inbound traffic.
 func (ska *SessionKeepAlive) NotePeerActivity() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
