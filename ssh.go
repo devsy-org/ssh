@@ -91,6 +91,17 @@ type ConnectionFailedCallback func(conn net.Conn, err error)
 // Please note: the ServerConn is closed at this point.
 type ConnectionCompleteCallback func(conn *gossh.ServerConn, err error)
 
+// ConnectionClosingCallback is invoked synchronously the moment HandleConn
+// observes the inbound channels stream close (i.e., the SSH transport is
+// ending), BEFORE sshConn.Wait() is called and BEFORE any deferred cleanup
+// runs. Unlike ConnectionCompleteCallback this does not block on Wait(), so
+// it fires reliably even when the underlying transport is permanently stuck
+// (e.g., a stalled ProxyCommand chain). Use it for fast-path resource
+// cleanup. The Context is the same one threaded through auth and channel
+// handlers, so per-connection state stashed via ctx.SetValue is reachable
+// without an external sync.Map keyed by *gossh.ServerConn.
+type ConnectionClosingCallback func(ctx Context, conn *gossh.ServerConn)
+
 // Window represents the size of a PTY window.
 //
 // See https://datatracker.ietf.org/doc/html/rfc4254#section-6.2

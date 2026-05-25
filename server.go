@@ -63,6 +63,7 @@ type Server struct {
 	// succeed, never both.
 	ConnectionFailedCallback   ConnectionFailedCallback   // callback to report connection failures
 	ConnectionCompleteCallback ConnectionCompleteCallback // callback to report connection completion
+	ConnectionClosingCallback  ConnectionClosingCallback  // callback invoked synchronously when the transport begins closing, before sshConn.Wait()
 
 	IdleTimeout time.Duration // connection timeout when no activity, none if empty
 	MaxTimeout  time.Duration // absolute connection timeout, none if empty
@@ -323,6 +324,18 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	applyConnMetadata(ctx, sshConn)
 	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
 	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
+
+	// Connection-level keep-alive: runs for the lifetime of the transport,
+	// independent of whether any session is active. This is what detects a
+	// dead transport between sessions (e.g., an idle ControlMaster whose
+	// outer ssh has been -O exit'd but whose ProxyCommand chain hasn't
+	// propagated EOF). On timeout we close sshConn so HandleConn's
+	// `for ch := range chans` loop unblocks and the closing/complete
+	// callbacks can fire.
+	keepAliveDone := make(chan struct{})
+	go srv.connectionKeepAlive(ctx, sshConn, keepAliveDone)
+	defer close(keepAliveDone)
+
 	// go gossh.DiscardRequests(reqs)
 	go srv.handleRequests(ctx, reqs)
 	for ch := range chans {
@@ -335,6 +348,62 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 			continue
 		}
 		go handler(srv, sshConn, ch, ctx)
+	}
+
+	// Fire the closing callback synchronously, before any defers (including
+	// ConnectionCompleteCallback's sshConn.Wait()) run. This is the only
+	// hook downstream callers can rely on when the transport is stuck —
+	// Wait() may never return.
+	if srv.ConnectionClosingCallback != nil {
+		srv.ConnectionClosingCallback(ctx, sshConn)
+	}
+}
+
+// connectionKeepAlive drives transport-level keep-alive pings for the life
+// of sshConn. It uses the gossh global-request channel
+// (sshConn.SendRequest), which works whether or not any session channels
+// exist. After ClientAliveCountMax consecutive intervals with no successful
+// reply, sshConn is closed so HandleConn unblocks. Stops when `done`
+// closes (HandleConn returning).
+func (srv *Server) connectionKeepAlive(
+	ctx Context,
+	sshConn *gossh.ServerConn,
+	done <-chan struct{},
+) {
+	interval := srv.ClientAliveInterval
+	countMax := srv.ClientAliveCountMax
+	if interval <= 0 || countMax <= 0 {
+		return
+	}
+
+	// Reuse the SessionKeepAlive already stashed on ctx so request-handler
+	// resets (KeepAliveRequestHandler) and metrics keep working.
+	keepAlive := ctx.KeepAlive()
+
+	inFlight := make(chan struct{}, 1)
+	for {
+		select {
+		case <-done:
+			return
+		case <-keepAlive.Ticks():
+			if keepAlive.TimeIsUp() {
+				_ = sshConn.Close()
+				return
+			}
+			select {
+			case inFlight <- struct{}{}:
+			default:
+				continue
+			}
+			go func() {
+				defer func() { <-inFlight }()
+				_, _, err := sshConn.SendRequest(keepAliveRequestType, true, nil)
+				keepAlive.ServerRequestedKeepAliveCallback()
+				if err == nil {
+					keepAlive.Reset()
+				}
+			}()
+		}
 	}
 }
 

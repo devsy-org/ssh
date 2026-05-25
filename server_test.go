@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 func TestAddHostKey(t *testing.T) {
@@ -77,6 +80,59 @@ func TestServerShutdown(t *testing.T) {
 		// TODO: add timeout for sessDone
 		<-sessDone
 		return
+	}
+}
+
+// TestConnectionClosingCallback verifies the closing callback fires
+// synchronously when HandleConn observes the channels stream close, even
+// when the client disconnects abruptly. It must fire before
+// ConnectionCompleteCallback (which blocks on sshConn.Wait()).
+func TestConnectionClosingCallback(t *testing.T) {
+	t.Parallel()
+
+	closingFired := make(chan struct{})
+	completeFired := make(chan struct{})
+	var closingCtx atomic.Value // ssh.Context observed at callback time
+
+	srv := &Server{
+		Handler: func(s Session) {
+			_, _ = io.WriteString(s, "hi")
+		},
+		ConnectionClosingCallback: func(ctx Context, _ *gossh.ServerConn) {
+			closingCtx.Store(ctx)
+			close(closingFired)
+		},
+		ConnectionCompleteCallback: func(_ *gossh.ServerConn, _ error) {
+			close(completeFired)
+		},
+	}
+
+	l := newLocalTCPListener()
+	go func() { _ = srv.serveOnce(l) }()
+
+	sess, client, _ := newClientSession(t, l.Addr().String(), nil)
+	if err := sess.Run(""); err != nil && err != io.EOF {
+		t.Fatalf("session run: %v", err)
+	}
+	_ = sess.Close()
+	_ = client.Close()
+
+	select {
+	case <-closingFired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ConnectionClosingCallback did not fire within 2s of client disconnect")
+	}
+
+	if got := closingCtx.Load(); got == nil {
+		t.Fatal("ConnectionClosingCallback received nil Context")
+	}
+
+	// Complete callback should also fire after closing (Wait returns once
+	// the underlying TCP closes); it should not race ahead of closing.
+	select {
+	case <-completeFired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ConnectionCompleteCallback did not fire")
 	}
 }
 
