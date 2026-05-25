@@ -213,6 +213,81 @@ func TestConnectionKeepAliveClosesStalledConn(t *testing.T) {
 	}
 }
 
+// TestConnectionKeepAliveClosesStalledConnWithOpenSession is the counterpart
+// to TestConnectionKeepAliveClosesStalledConn: when a session channel is open
+// (so probes go as channel requests per client_alive_check), and the peer
+// stops replying to those probes, the connection-level keep-alive must still
+// detect the stall and tear the transport down. This exercises the
+// channel-request path of the deadline check; the no-session variant exercises
+// the global-request path.
+func TestConnectionKeepAliveClosesStalledConnWithOpenSession(t *testing.T) {
+	t.Parallel()
+
+	closingFired := make(chan struct{})
+
+	srv := &Server{
+		Handler:             func(s Session) { <-s.Context().Done() },
+		ClientAliveInterval: 100 * time.Millisecond,
+		ClientAliveCountMax: 3,
+		ConnectionClosingCallback: func(_ Context, _ *gossh.ServerConn) {
+			close(closingFired)
+		},
+	}
+
+	l := newLocalTCPListener()
+	defer func() { _ = l.Close() }()
+	go func() { _ = srv.serveOnce(l) }()
+
+	cfg := &gossh.ClientConfig{
+		User:            "testuser",
+		Auth:            []gossh.AuthMethod{gossh.Password("testpass")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
+	}
+	netConn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	sshConn, chans, reqs, err := gossh.NewClientConn(netConn, l.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("NewClientConn: %v", err)
+	}
+	defer func() { _ = sshConn.Close() }()
+
+	ch, chReqs, err := sshConn.OpenChannel("session", nil)
+	if err != nil {
+		t.Fatalf("OpenChannel: %v", err)
+	}
+	defer func() { _ = ch.Close() }()
+
+	// Drain all three request streams (global, per-channel, and the
+	// NewChannel stream) WITHOUT replying. The server's channel-typed
+	// keepalive probes go on chReqs and will never get a reply, so
+	// notePeerActivity is never called on the session-request side and
+	// TimeIsUp eventually fires.
+	go func() {
+		for range chans { //nolint:revive // intentional drain
+		}
+	}()
+	go func() {
+		for req := range reqs {
+			_ = req
+		}
+	}()
+	go func() {
+		for req := range chReqs {
+			_ = req
+		}
+	}()
+
+	// 100ms * 3 = 300ms expected; allow generous slack for CI.
+	select {
+	case <-closingFired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ConnectionClosingCallback did not fire; " +
+			"stalled-with-session client was not torn down by connection-level keep-alive")
+	}
+}
+
 // TestConnectionKeepAliveUsesChannelRequestWhenSessionOpen verifies that the
 // server's connection-level keepalive mirrors OpenSSH's client_alive_check():
 // while at least one channel is open it sends keepalive@openssh.com as a

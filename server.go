@@ -485,7 +485,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 			onClose:    openChans.remove,
 			notePeerActivity: func() {
 				if ka := ctx.KeepAlive(); ka != nil {
-					ka.NotePeerActivity()
+					ka.notePeerActivity()
 				}
 			},
 			ctx: ctx,
@@ -526,7 +526,7 @@ func (srv *Server) connectionKeepAlive(
 	// Do NOT Close() the SessionKeepAlive when this function returns: other
 	// goroutines (Server.handleRequests, trackingNewChannel.Accept's
 	// forwarder, and any in-flight probe goroutine spawned below) may still
-	// be calling NotePeerActivity / Reset after we return. The ticker is
+	// be calling notePeerActivity / Reset after we return. The ticker is
 	// no longer referenced once HandleConn returns and is GC'd.
 	keepAlive := ctx.KeepAlive()
 
@@ -591,7 +591,7 @@ func (srv *Server) connectionKeepAlive(
 func (srv *Server) handleRequests(ctx Context, in <-chan *gossh.Request) {
 	for req := range in {
 		if ka := ctx.KeepAlive(); ka != nil {
-			ka.NotePeerActivity()
+			ka.notePeerActivity()
 		}
 		handler := srv.RequestHandlers[req.Type]
 		if handler == nil {

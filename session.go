@@ -294,7 +294,7 @@ func (sess *session) handleRequests(_ Context, reqs <-chan *gossh.Request) {
 	}()
 	for req := range reqs {
 		if ka := sess.ctx.KeepAlive(); ka != nil {
-			ka.NotePeerActivity()
+			ka.notePeerActivity()
 		}
 		switch req.Type {
 		case "shell", "exec":
