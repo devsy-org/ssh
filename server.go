@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -14,6 +15,128 @@ import (
 // ErrServerClosed is returned by the Server's Serve, ListenAndServe,
 // and ListenAndServeTLS methods after a call to Shutdown or Close.
 var ErrServerClosed = errors.New("ssh: Server closed")
+
+// openChannelSet tracks accepted channels for a connection so that
+// connectionKeepAlive can mirror OpenSSH's client_alive_check() behavior:
+// when at least one channel is open, send the keepalive as a channel
+// request on that channel; otherwise fall back to a global request.
+type openChannelSet struct {
+	mu    sync.Mutex
+	chans []gossh.Channel
+}
+
+func (s *openChannelSet) add(c gossh.Channel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chans = append(s.chans, c)
+}
+
+func (s *openChannelSet) any() gossh.Channel {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.chans) == 0 {
+		return nil
+	}
+	return s.chans[0]
+}
+
+func (s *openChannelSet) remove(c gossh.Channel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, ch := range s.chans {
+		if ch == c {
+			s.chans = append(s.chans[:i], s.chans[i+1:]...)
+			return
+		}
+	}
+}
+
+// trackingNewChannel wraps a gossh.NewChannel so that successful Accept
+// calls register the underlying channel with an openChannelSet. The
+// ChannelHandler API receives a gossh.NewChannel and typically calls
+// Accept() inside the handler, so wrapping at HandleConn dispatch time is
+// the only place to observe acceptance for arbitrary external handlers
+// without modifying them.
+//
+// The per-channel request stream returned by Accept is also wrapped so
+// that close of the underlying gossh stream (channel teardown) drops the
+// channel from the openChannelSet, and so each inbound request bumps the
+// keep-alive activity marker.
+type trackingNewChannel struct {
+	gossh.NewChannel
+	set              *openChannelSet
+	onAccept         func(gossh.Channel)
+	onClose          func(gossh.Channel)
+	notePeerActivity func()
+	ctx              Context
+}
+
+// trackingChanReqBuffer matches gossh's per-channel request channel
+// buffer (see chanSize in golang.org/x/crypto/ssh/handshake.go). Keeping
+// the size in sync avoids changing back-pressure semantics for handlers
+// that did not previously block on a full request channel.
+const trackingChanReqBuffer = 16
+
+func (t *trackingNewChannel) Accept() (gossh.Channel, <-chan *gossh.Request, error) {
+	ch, reqs, err := t.NewChannel.Accept()
+	if err != nil {
+		return ch, reqs, err
+	}
+	if t.onAccept != nil {
+		t.onAccept(ch)
+	}
+	wrapped := make(chan *gossh.Request, trackingChanReqBuffer)
+	go func() {
+		defer close(wrapped)
+		defer func() {
+			if t.onClose != nil {
+				t.onClose(ch)
+			}
+		}()
+		ctxDone := t.ctx.Done()
+		for r := range reqs {
+			if t.notePeerActivity != nil {
+				t.notePeerActivity()
+			}
+			select {
+			case wrapped <- r:
+			case <-ctxDone:
+				// Handler stopped draining and the connection is
+				// going away. Negatively reply to any want-reply
+				// request we were holding, then drain upstream so
+				// gossh's per-channel request goroutine doesn't
+				// leak, replying false to any subsequent
+				// want-reply requests as we go.
+				if r.WantReply {
+					_ = r.Reply(false, nil)
+				}
+				for r2 := range reqs {
+					if r2.WantReply {
+						_ = r2.Reply(false, nil)
+					}
+				}
+				return
+			}
+		}
+	}()
+	return ch, wrapped, nil
+}
+
+// NewChannelUnwrapper is implemented by NewChannel implementations that
+// wrap another NewChannel for internal bookkeeping. Channel handlers
+// that need access to the underlying gossh.NewChannel (e.g., to type-
+// assert against a custom implementation) can call Unwrap to recover
+// it. This is needed because the library wraps every incoming
+// NewChannel to track per-channel keep-alive activity; the wrapper is
+// otherwise transparent.
+type NewChannelUnwrapper interface {
+	Unwrap() gossh.NewChannel
+}
+
+// Unwrap returns the underlying gossh.NewChannel. See NewChannelUnwrapper.
+func (t *trackingNewChannel) Unwrap() gossh.NewChannel {
+	return t.NewChannel
+}
 
 // SubsystemHandler is a callback for handling SSH subsystem requests.
 type SubsystemHandler func(s Session)
@@ -63,6 +186,7 @@ type Server struct {
 	// succeed, never both.
 	ConnectionFailedCallback   ConnectionFailedCallback   // callback to report connection failures
 	ConnectionCompleteCallback ConnectionCompleteCallback // callback to report connection completion
+	ConnectionClosingCallback  ConnectionClosingCallback  // see ConnectionClosingCallback type doc
 
 	IdleTimeout time.Duration // connection timeout when no activity, none if empty
 	MaxTimeout  time.Duration // absolute connection timeout, none if empty
@@ -70,6 +194,12 @@ type Server struct {
 	// ChannelHandlers allow overriding the built-in session handlers or provide
 	// extensions to the protocol, such as tcpip forwarding. By default only the
 	// "session" handler is enabled.
+	//
+	// The gossh.NewChannel value passed to handlers may be wrapped by this
+	// package for keep-alive bookkeeping (tracking open channels and noting
+	// inbound activity). Handlers that need access to the unwrapped
+	// underlying value can type-assert to NewChannelUnwrapper and call
+	// Unwrap.
 	ChannelHandlers map[string]ChannelHandler
 
 	// RequestHandlers allow overriding the server-level request handlers or
@@ -323,6 +453,29 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	applyConnMetadata(ctx, sshConn)
 	// To prevent race conditions, we need to configure the keep-alive before goroutines kick off
 	applyKeepAlive(ctx, srv.ClientAliveInterval, srv.ClientAliveCountMax)
+	openChans := &openChannelSet{}
+	ctx.SetValue(contextKeyOpenChannels, openChans)
+
+	// Connection-level keep-alive: runs for the lifetime of the transport,
+	// independent of whether any session is active. This is what detects a
+	// dead transport between sessions (e.g., an idle ControlMaster whose
+	// outer ssh has been -O exit'd but whose ProxyCommand chain hasn't
+	// propagated EOF). On timeout we close sshConn so HandleConn's
+	// `for ch := range chans` loop unblocks and the closing/complete
+	// callbacks can fire.
+	keepAliveDone := make(chan struct{})
+	go srv.connectionKeepAlive(ctx, sshConn, keepAliveDone)
+	// LIFO: close(keepAliveDone) runs first to signal connectionKeepAlive
+	// to return, then KeepAlive().Close() stops the ticker deterministically.
+	// Without the explicit Close, the ticker keeps firing on a dropped
+	// channel until ctx (held by spawned handler goroutines and the
+	// per-channel forwarder) becomes unreachable and GC reclaims it.
+	// All SessionKeepAlive methods are mutex-protected, so a straggler
+	// goroutine calling notePeerActivity/Reset after Close just sees
+	// closed=true and no-ops on the ticker.
+	defer ctx.KeepAlive().Close()
+	defer close(keepAliveDone)
+
 	// go gossh.DiscardRequests(reqs)
 	go srv.handleRequests(ctx, reqs)
 	for ch := range chans {
@@ -334,12 +487,117 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 			_ = ch.Reject(gossh.UnknownChannelType, "unsupported channel type")
 			continue
 		}
-		go handler(srv, sshConn, ch, ctx)
+		tracked := &trackingNewChannel{
+			NewChannel: ch,
+			set:        openChans,
+			onAccept:   openChans.add,
+			onClose:    openChans.remove,
+			notePeerActivity: func() {
+				if ka := ctx.KeepAlive(); ka != nil {
+					ka.notePeerActivity()
+				}
+			},
+			ctx: ctx,
+		}
+		go handler(srv, sshConn, tracked, ctx)
+	}
+
+	// Fire the closing callback synchronously, before any deferred cleanup
+	// runs, so downstream callers have a deterministic hook the moment the
+	// channels stream ends. Deferred hooks that block on the transport
+	// (e.g., waiting on the mux) may be delayed indefinitely on a stuck
+	// transport; this path is not.
+	if srv.ConnectionClosingCallback != nil {
+		srv.ConnectionClosingCallback(ctx, sshConn)
+	}
+}
+
+// connectionKeepAlive drives transport-level keep-alive pings for the life
+// of sshConn. It mirrors OpenSSH's client_alive_check(): if at least one
+// channel is open, the keepalive is sent as a SSH2_MSG_CHANNEL_REQUEST on
+// that channel; otherwise it falls back to a SSH2_MSG_GLOBAL_REQUEST. After
+// ClientAliveCountMax consecutive intervals with no successful reply,
+// sshConn is closed so HandleConn unblocks. Stops when `done` closes
+// (HandleConn returning).
+func (srv *Server) connectionKeepAlive(
+	ctx Context,
+	sshConn *gossh.ServerConn,
+	done <-chan struct{},
+) {
+	countMax := srv.ClientAliveCountMax
+	if srv.ClientAliveInterval <= 0 || countMax <= 0 {
+		return
+	}
+
+	// Reuse the SessionKeepAlive already stashed on ctx so request-handler
+	// resets (KeepAliveRequestHandler) and metrics keep working. The ticker
+	// is Stop()ped from HandleConn's defer chain after this goroutine has
+	// been signaled to return.
+	keepAlive := ctx.KeepAlive()
+
+	openChans := ctx.Value(contextKeyOpenChannels).(*openChannelSet)
+
+	inFlight := make(chan struct{}, 1)
+	for {
+		select {
+		case <-done:
+			return
+		case <-keepAlive.Ticks():
+			if keepAlive.TimeIsUp() {
+				log.Printf(
+					"ssh: connection keep-alive timeout after %d intervals; closing transport",
+					countMax,
+				)
+				if err := sshConn.Close(); err != nil {
+					log.Printf("ssh: failed to close stalled transport: %v", err)
+				}
+				return
+			}
+			select {
+			case inFlight <- struct{}{}:
+			default:
+				continue
+			}
+			go func() {
+				defer func() { <-inFlight }()
+				keepAlive.ServerRequestedKeepAliveCallback()
+				// Mirror OpenSSH client_alive_check(): prefer a channel
+				// request on an open channel; fall back to a global
+				// request if no channel is open or the channel send
+				// fails (channel was closed mid-flight).
+				//
+				// No outer timeout is needed here: the inFlight semaphore
+				// already prevents overlapping probes, TimeIsUp() at the
+				// next tick enforces the deadline, and if SendRequest
+				// hangs forever it will be unblocked when the TimeIsUp
+				// branch closes sshConn.
+				var err error
+				ch := openChans.any()
+				if ch != nil {
+					_, err = ch.SendRequest(keepAliveRequestType, true, nil)
+					if err != nil {
+						openChans.remove(ch)
+						ch = nil
+					}
+				}
+				if ch == nil {
+					_, _, err = sshConn.SendRequest(keepAliveRequestType, true, nil)
+				}
+				if err == nil {
+					keepAlive.Reset()
+				} else {
+					log.Printf("ssh: keepalive request failed: %v", err)
+				}
+			}()
+		}
 	}
 }
 
 func (srv *Server) handleRequests(ctx Context, in <-chan *gossh.Request) {
 	for req := range in {
+		if ka := ctx.KeepAlive(); ka != nil {
+			ka.notePeerActivity()
+		}
 		handler := srv.RequestHandlers[req.Type]
 		if handler == nil {
 			handler = srv.RequestHandlers["default"]

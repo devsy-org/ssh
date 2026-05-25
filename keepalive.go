@@ -71,6 +71,21 @@ func (ska *SessionKeepAlive) Reset() {
 	}
 }
 
+// notePeerActivity records inbound traffic from the peer. It bumps
+// lastReceived (clearing the dead-peer deadline used by TimeIsUp) and
+// resets the ticker so the next probe fires `interval` after the most
+// recent activity. Matches OpenSSH sshd, which clears keep_alive_timeouts
+// on every successfully-received packet and defers the next probe on
+// inbound traffic. Internal — driven by the package's request loops.
+func (ska *SessionKeepAlive) notePeerActivity() {
+	ska.m.Lock()
+	defer ska.m.Unlock()
+	if ska.ticker != nil && !ska.closed {
+		ska.lastReceived = time.Now()
+		ska.ticker.Reset(ska.clientAliveInterval)
+	}
+}
+
 // Ticks returns the channel that fires on each keep-alive interval.
 func (ska *SessionKeepAlive) Ticks() <-chan time.Time {
 	return ska.tickerCh

@@ -60,6 +60,12 @@ var (
 	// ContextKeyKeepAlive is a context key for use with Contexts in this package.
 	// The associated value will be of type *SessionKeepAlive.
 	ContextKeyKeepAlive = &contextKey{"keep-alive"}
+
+	// contextKeyOpenChannels is an internal context key for the
+	// per-connection *openChannelSet used by connection keep-alive
+	// bookkeeping. Unexported because the value type is unexported and
+	// external consumers should not depend on this detail.
+	contextKeyOpenChannels = &contextKey{"open-channels"}
 )
 
 // Context is a package specific context interface. It exposes connection
