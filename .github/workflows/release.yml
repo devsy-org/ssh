@@ -24,7 +24,7 @@ jobs:
           manifest-file: .release-please-manifest.json
           token: ${{ steps.app-token.outputs.token }}
       - if: steps.release.outputs.pr
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - if: steps.release.outputs.pr
         run: gh pr merge --auto --squash ${{ fromJSON(steps.release.outputs.pr).number }}
         env:
