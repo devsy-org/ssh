@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/devsy-org/ssh/compare/v1.2.2...v1.2.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/crypto to v0.55.0 ([#16](https://github.com/devsy-org/ssh/issues/16)) ([8f77af3](https://github.com/devsy-org/ssh/commit/8f77af36944e791b0ca12053d9f236f18c1d4b09))
+
 ## [1.2.2](https://github.com/devsy-org/ssh/compare/v1.2.1...v1.2.2) (2026-07-08)
 
 
