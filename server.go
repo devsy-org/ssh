@@ -580,6 +580,8 @@ func (srv *Server) connectionKeepAlive(
 					ok, err = ch.SendRequest(keepAliveRequestType, true, nil)
 					if err != nil {
 						openChans.remove(ch)
+					}
+					if err != nil || !ok {
 						ch = nil
 					}
 				}

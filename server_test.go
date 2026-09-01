@@ -466,9 +466,13 @@ func TestConnectionKeepAliveNegativeChannelReplyDoesNotReset(t *testing.T) {
 		for range chans { //nolint:revive // intentional drain
 		}
 	}()
+	var globalCount atomic.Int64
 	go func() {
 		for req := range reqs {
-			if req.WantReply {
+			if req.Type == keepAliveRequestType {
+				globalCount.Add(1)
+				_ = req.Reply(false, nil)
+			} else if req.WantReply {
 				_ = req.Reply(true, nil)
 			}
 		}
@@ -493,6 +497,9 @@ func TestConnectionKeepAliveNegativeChannelReplyDoesNotReset(t *testing.T) {
 	case <-closingFired:
 	case <-time.After(5 * time.Second):
 		t.Fatal("negative channel keepalive replies incorrectly reset the deadline")
+	}
+	if globalCount.Load() == 0 {
+		t.Fatal("negative channel keepalive reply did not fall back to a global request")
 	}
 }
 
