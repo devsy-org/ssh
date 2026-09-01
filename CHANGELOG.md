@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.5](https://github.com/devsy-org/ssh/compare/v1.2.4...v1.2.5) (2026-09-01)
+
+
+### Bug Fixes
+
+* fallback channel keepalives globally ([#23](https://github.com/devsy-org/ssh/issues/23)) ([07ff6a5](https://github.com/devsy-org/ssh/commit/07ff6a598e9cff5010c843292956b6c03d9e7fb8))
+
 ## [1.2.4](https://github.com/devsy-org/ssh/compare/v1.2.3...v1.2.4) (2026-09-01)
 
 
