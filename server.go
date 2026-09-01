@@ -571,22 +571,25 @@ func (srv *Server) connectionKeepAlive(
 				// next tick enforces the deadline, and if SendRequest
 				// hangs forever it will be unblocked when the TimeIsUp
 				// branch closes sshConn.
-				var err error
+				var (
+					ok  bool
+					err error
+				)
 				ch := openChans.any()
 				if ch != nil {
-					_, err = ch.SendRequest(keepAliveRequestType, true, nil)
+					ok, err = ch.SendRequest(keepAliveRequestType, true, nil)
 					if err != nil {
 						openChans.remove(ch)
 						ch = nil
 					}
 				}
 				if ch == nil {
-					_, _, err = sshConn.SendRequest(keepAliveRequestType, true, nil)
+					ok, _, err = sshConn.SendRequest(keepAliveRequestType, true, nil)
 				}
-				if err == nil {
+				if err == nil && ok {
 					keepAlive.Reset()
 				} else {
-					log.Printf("ssh: keepalive request failed: %v", err)
+					log.Printf("ssh: keepalive request failed: ok=%t err=%v", ok, err)
 				}
 			}()
 		}

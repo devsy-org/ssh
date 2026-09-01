@@ -81,7 +81,7 @@ type wrappedConn struct {
 
 func (c *wrappedConn) Write(p []byte) (n int, err error) {
 	n, err = c.Conn.Write(p)
-	atomic.AddInt32(&(c.written), int32(n)) //nolint:gosec // test code, overflow not possible
+	atomic.AddInt32(&c.written, int32(n)) //nolint:gosec // test code, overflow not possible
 	return
 }
 
@@ -108,7 +108,7 @@ func TestConnWrapping(t *testing.T) {
 	if err := session.Shell(); err != nil {
 		t.Fatal(err)
 	}
-	if atomic.LoadInt32(&(wrapped.written)) == 0 {
+	if atomic.LoadInt32(&wrapped.written) == 0 {
 		t.Fatal("wrapped conn not written to")
 	}
 }

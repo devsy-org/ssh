@@ -373,6 +373,129 @@ func TestConnectionKeepAliveUsesChannelRequestWhenSessionOpen(t *testing.T) {
 	}
 }
 
+// TestConnectionKeepAliveNegativeGlobalReplyDoesNotReset verifies that a
+// protocol-level negative response is not counted as a successful keepalive.
+func TestConnectionKeepAliveNegativeGlobalReplyDoesNotReset(t *testing.T) {
+	t.Parallel()
+
+	closingFired := make(chan struct{})
+	srv := &Server{
+		Handler:             func(_ Session) {},
+		ClientAliveInterval: 100 * time.Millisecond,
+		ClientAliveCountMax: 2,
+		ConnectionClosingCallback: func(_ Context, _ *gossh.ServerConn) {
+			close(closingFired)
+		},
+	}
+
+	l := newLocalTCPListener()
+	defer func() { _ = l.Close() }()
+	go func() { _ = srv.serveOnce(l) }()
+
+	cfg := &gossh.ClientConfig{
+		User:            "testuser",
+		Auth:            []gossh.AuthMethod{gossh.Password("testpass")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
+	}
+	netConn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	sshConn, chans, reqs, err := gossh.NewClientConn(netConn, l.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("NewClientConn: %v", err)
+	}
+	defer func() { _ = sshConn.Close() }()
+
+	go func() {
+		for range chans { //nolint:revive // intentional drain
+		}
+	}()
+	go func() {
+		for req := range reqs {
+			if req.Type == keepAliveRequestType {
+				_ = req.Reply(false, nil)
+			} else if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+		}
+	}()
+
+	select {
+	case <-closingFired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("negative global keepalive replies incorrectly reset the deadline")
+	}
+}
+
+// TestConnectionKeepAliveNegativeChannelReplyDoesNotReset is the channel
+// request counterpart to TestConnectionKeepAliveNegativeGlobalReplyDoesNotReset.
+func TestConnectionKeepAliveNegativeChannelReplyDoesNotReset(t *testing.T) {
+	t.Parallel()
+
+	closingFired := make(chan struct{})
+	srv := &Server{
+		Handler:             func(s Session) { <-s.Context().Done() },
+		ClientAliveInterval: 100 * time.Millisecond,
+		ClientAliveCountMax: 2,
+		ConnectionClosingCallback: func(_ Context, _ *gossh.ServerConn) {
+			close(closingFired)
+		},
+	}
+
+	l := newLocalTCPListener()
+	defer func() { _ = l.Close() }()
+	go func() { _ = srv.serveOnce(l) }()
+
+	cfg := &gossh.ClientConfig{
+		User:            "testuser",
+		Auth:            []gossh.AuthMethod{gossh.Password("testpass")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec // test code
+	}
+	netConn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	sshConn, chans, reqs, err := gossh.NewClientConn(netConn, l.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("NewClientConn: %v", err)
+	}
+	defer func() { _ = sshConn.Close() }()
+
+	go func() {
+		for range chans { //nolint:revive // intentional drain
+		}
+	}()
+	go func() {
+		for req := range reqs {
+			if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+		}
+	}()
+
+	ch, chReqs, err := sshConn.OpenChannel("session", nil)
+	if err != nil {
+		t.Fatalf("OpenChannel: %v", err)
+	}
+	defer func() { _ = ch.Close() }()
+	go func() {
+		for req := range chReqs {
+			if req.Type == keepAliveRequestType {
+				_ = req.Reply(false, nil)
+			} else if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+		}
+	}()
+
+	select {
+	case <-closingFired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("negative channel keepalive replies incorrectly reset the deadline")
+	}
+}
+
 // TestConnectionKeepAlivePrunesClosedChannels verifies that the
 // per-channel close hook prunes channels from the openChannelSet as
 // soon as the client closes them, BEFORE the next keepalive probe
