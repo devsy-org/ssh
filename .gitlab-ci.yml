@@ -1,0 +1,32 @@
+stages:
+  - test
+
+variables:
+  GOTOOLCHAIN: local
+
+.default-go-job:
+  image: golang:1.26-bookworm
+  stage: test
+  before_script:
+    - go version
+
+unit:
+  extends: .default-go-job
+  script:
+    - go test ./...
+
+race:
+  extends: .default-go-job
+  script:
+    - go test -race ./...
+
+openssh-integration:
+  extends: .default-go-job
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends openssh-client
+    - rm -rf /var/lib/apt/lists/*
+    - go version
+    - ssh -V
+  script:
+    - go test -count=1 -tags=openssh_integration ./...
