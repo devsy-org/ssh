@@ -373,12 +373,14 @@ func TestConnectionKeepAliveUsesChannelRequestWhenSessionOpen(t *testing.T) {
 	}
 }
 
-// TestConnectionKeepAliveNegativeGlobalReplyDoesNotReset verifies that a
-// protocol-level negative response is not counted as a successful keepalive.
-func TestConnectionKeepAliveNegativeGlobalReplyDoesNotReset(t *testing.T) {
+// TestConnectionKeepAliveNegativeGlobalReplyKeepsAlive verifies OpenSSH-style
+// keepalive semantics: a protocol-level failure reply still proves that the
+// peer received and processed the request, so it resets the liveness deadline.
+func TestConnectionKeepAliveNegativeGlobalReplyKeepsAlive(t *testing.T) {
 	t.Parallel()
 
 	closingFired := make(chan struct{})
+	var globalCount atomic.Int64
 	srv := &Server{
 		Handler:             func(_ Session) {},
 		ClientAliveInterval: 100 * time.Millisecond,
@@ -414,6 +416,7 @@ func TestConnectionKeepAliveNegativeGlobalReplyDoesNotReset(t *testing.T) {
 	go func() {
 		for req := range reqs {
 			if req.Type == keepAliveRequestType {
+				globalCount.Add(1)
 				_ = req.Reply(false, nil)
 			} else if req.WantReply {
 				_ = req.Reply(true, nil)
@@ -421,19 +424,26 @@ func TestConnectionKeepAliveNegativeGlobalReplyDoesNotReset(t *testing.T) {
 		}
 	}()
 
+	// The configured timeout is 200ms. Negative replies must keep the
+	// transport alive well beyond that window.
 	select {
 	case <-closingFired:
-	case <-time.After(5 * time.Second):
-		t.Fatal("negative global keepalive replies incorrectly reset the deadline")
+		t.Fatal("negative global keepalive reply did not preserve liveness")
+	case <-time.After(700 * time.Millisecond):
+	}
+	if got := globalCount.Load(); got < 2 {
+		t.Fatalf("expected multiple negative global keepalive replies, got %d", got)
 	}
 }
 
-// TestConnectionKeepAliveNegativeChannelReplyDoesNotReset is the channel
-// request counterpart to TestConnectionKeepAliveNegativeGlobalReplyDoesNotReset.
-func TestConnectionKeepAliveNegativeChannelReplyDoesNotReset(t *testing.T) {
+// TestConnectionKeepAliveNegativeChannelReplyKeepsAlive is the channel
+// counterpart to TestConnectionKeepAliveNegativeGlobalReplyKeepsAlive. A
+// negative channel reply proves liveness and must not trigger global fallback.
+func TestConnectionKeepAliveNegativeChannelReplyKeepsAlive(t *testing.T) {
 	t.Parallel()
 
 	closingFired := make(chan struct{})
+	var globalCount, channelCount atomic.Int64
 	srv := &Server{
 		Handler:             func(s Session) { <-s.Context().Done() },
 		ClientAliveInterval: 100 * time.Millisecond,
@@ -466,7 +476,6 @@ func TestConnectionKeepAliveNegativeChannelReplyDoesNotReset(t *testing.T) {
 		for range chans { //nolint:revive // intentional drain
 		}
 	}()
-	var globalCount atomic.Int64
 	go func() {
 		for req := range reqs {
 			if req.Type == keepAliveRequestType {
@@ -486,6 +495,7 @@ func TestConnectionKeepAliveNegativeChannelReplyDoesNotReset(t *testing.T) {
 	go func() {
 		for req := range chReqs {
 			if req.Type == keepAliveRequestType {
+				channelCount.Add(1)
 				_ = req.Reply(false, nil)
 			} else if req.WantReply {
 				_ = req.Reply(true, nil)
@@ -493,13 +503,18 @@ func TestConnectionKeepAliveNegativeChannelReplyDoesNotReset(t *testing.T) {
 		}
 	}()
 
+	// The configured timeout is 200ms. Repeated negative channel replies
+	// must keep the connection alive and must not cause a global fallback.
 	select {
 	case <-closingFired:
-	case <-time.After(5 * time.Second):
-		t.Fatal("negative channel keepalive replies incorrectly reset the deadline")
+		t.Fatal("negative channel keepalive reply did not preserve liveness")
+	case <-time.After(700 * time.Millisecond):
 	}
-	if globalCount.Load() == 0 {
-		t.Fatal("negative channel keepalive reply did not fall back to a global request")
+	if got := channelCount.Load(); got < 2 {
+		t.Fatalf("expected multiple negative channel keepalive replies, got %d", got)
+	}
+	if got := globalCount.Load(); got != 0 {
+		t.Fatalf("negative channel replies unexpectedly triggered %d global keepalives", got)
 	}
 }
 
