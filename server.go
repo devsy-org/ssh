@@ -516,7 +516,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 // of sshConn. It mirrors OpenSSH's client_alive_check(): if at least one
 // channel is open, the keepalive is sent as a SSH2_MSG_CHANNEL_REQUEST on
 // that channel; otherwise it falls back to a SSH2_MSG_GLOBAL_REQUEST. After
-// ClientAliveCountMax consecutive intervals with no successful reply,
+// ClientAliveCountMax consecutive intervals with no reply received,
 // sshConn is closed so HandleConn unblocks. Stops when `done` closes
 // (HandleConn returning).
 func (srv *Server) connectionKeepAlive(
@@ -563,35 +563,36 @@ func (srv *Server) connectionKeepAlive(
 				keepAlive.ServerRequestedKeepAliveCallback()
 				// Mirror OpenSSH client_alive_check(): prefer a channel
 				// request on an open channel; fall back to a global
-				// request if no channel is open or the channel send
-				// fails (channel was closed mid-flight).
+				// request only if no channel is open or the channel send
+				// fails at the transport level (for example, because the
+				// channel closed mid-flight). A negative SSH reply still
+				// proves that the peer received and processed the request.
 				//
 				// No outer timeout is needed here: the inFlight semaphore
 				// already prevents overlapping probes, TimeIsUp() at the
 				// next tick enforces the deadline, and if SendRequest
 				// hangs forever it will be unblocked when the TimeIsUp
 				// branch closes sshConn.
-				var (
-					ok  bool
-					err error
-				)
+				var err error
 				ch := openChans.any()
 				if ch != nil {
-					ok, err = ch.SendRequest(keepAliveRequestType, true, nil)
+					_, err = ch.SendRequest(keepAliveRequestType, true, nil)
 					if err != nil {
 						openChans.remove(ch)
-					}
-					if err != nil || !ok {
 						ch = nil
 					}
 				}
 				if ch == nil {
-					ok, _, err = sshConn.SendRequest(keepAliveRequestType, true, nil)
+					_, _, err = sshConn.SendRequest(keepAliveRequestType, true, nil)
 				}
-				if err == nil && ok {
+				// keepalive@openssh.com is intentionally unsupported by
+				// many peers. Both success and failure replies prove that
+				// the peer is alive; only a transport error means no reply
+				// was received.
+				if err == nil {
 					keepAlive.Reset()
 				} else {
-					log.Printf("ssh: keepalive request failed: ok=%t err=%v", ok, err)
+					log.Printf("ssh: keepalive request failed: err=%v", err)
 				}
 			}()
 		}
