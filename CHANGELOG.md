@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.7](https://github.com/devsy-org/ssh/compare/v1.2.6...v1.2.7) (2026-09-03)
+
+
+### Bug Fixes
+
+* treat negative keepalive replies as liveness ([#28](https://github.com/devsy-org/ssh/issues/28)) ([79e40ac](https://github.com/devsy-org/ssh/commit/79e40ac17b3e6ed9c600b5746253c35b8cbd44e9))
+
 ## [1.2.6](https://github.com/devsy-org/ssh/compare/v1.2.5...v1.2.6) (2026-09-02)
 
 
