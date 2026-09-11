@@ -139,7 +139,7 @@ func newTCPConnPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	accepted := make(chan *net.TCPConn)
 	acceptErr := make(chan error, 1)
