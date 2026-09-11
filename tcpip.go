@@ -2,6 +2,8 @@ package ssh
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -199,42 +201,68 @@ func (h *ForwardedTCPHandler) HandleSSHRequest(
 	}
 }
 
-// bicopy copies all of the data between the two connections and will close them
-// after one or both of them are done writing. If the context is canceled, both
-// of the connections will be closed.
+// bicopy copies all of the data between the two connections. When one
+// direction reaches EOF, it half-closes the destination's write side and keeps
+// the reverse direction running. Both connections are fully closed after both
+// directions finish, or when the context is canceled or a copy fails.
 func bicopy(ctx context.Context, c1, c2 io.ReadWriteCloser) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	defer func() {
 		_ = c1.Close()
 		_ = c2.Close()
 	}()
 
-	var wg sync.WaitGroup
-	copyFunc := func(dst io.WriteCloser, src io.Reader) {
-		defer func() {
-			wg.Done()
-			// If one side of the copy fails, ensure the other one exits as
-			// well.
-			cancel()
-		}()
-		_, _ = io.Copy(dst, src)
+	results := make(chan copyResult, 2)
+	go copyAndHalfClose(c1, c2, "c2->c1", results)
+	go copyAndHalfClose(c2, c1, "c1->c2", results)
+
+	completed := 0
+	aborted := false
+	for completed < 2 {
+		select {
+		case <-ctx.Done():
+			if !aborted {
+				aborted = true
+				_ = c1.Close()
+				_ = c2.Close()
+			}
+		case result := <-results:
+			completed++
+			if result.err != nil && !aborted {
+				aborted = true
+				_ = c1.Close()
+				_ = c2.Close()
+			}
+		}
+	}
+}
+
+type closeWriter interface {
+	CloseWrite() error
+}
+
+type copyResult struct {
+	direction string
+	err       error
+}
+
+func copyAndHalfClose(
+	dst io.WriteCloser,
+	src io.Reader,
+	direction string,
+	results chan<- copyResult,
+) {
+	_, err := io.Copy(dst, src)
+	if err == nil {
+		cw, ok := dst.(closeWriter)
+		if !ok {
+			err = fmt.Errorf("%s: destination does not support CloseWrite", direction)
+		} else {
+			err = cw.CloseWrite()
+			if errors.Is(err, io.EOF) {
+				err = nil
+			}
+		}
 	}
 
-	wg.Add(2)
-	go copyFunc(c1, c2)
-	go copyFunc(c2, c1)
-
-	// Convert waitgroup to a channel so we can also wait on the context.
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		wg.Wait()
-	}()
-
-	select {
-	case <-ctx.Done():
-	case <-done:
-	}
+	results <- copyResult{direction: direction, err: err}
 }
