@@ -73,6 +73,100 @@ func TestLocalPortForwardingWorks(t *testing.T) {
 	}
 }
 
+func TestBicopyPreservesHalfClose(t *testing.T) {
+	t.Parallel()
+
+	c1, c1Peer := newTCPConnPair(t)
+	c2, c2Peer := newTCPConnPair(t)
+	defer func() {
+		_ = c1Peer.Close()
+		_ = c2Peer.Close()
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		bicopy(context.Background(), c1, c2)
+		close(done)
+	}()
+
+	if _, err := c1Peer.Write([]byte("request")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c1Peer.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c2Peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	request, err := io.ReadAll(c2Peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(request) != "request" {
+		t.Fatalf("request = %q; want %q", request, "request")
+	}
+
+	if _, err := c2Peer.Write([]byte("response")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2Peer.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c1Peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	response, err := io.ReadAll(c1Peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(response) != "response" {
+		t.Fatalf("response = %q; want %q", response, "response")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("bicopy did not finish after both directions reached EOF")
+	}
+}
+
+func newTCPConnPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
+	t.Helper()
+
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	accepted := make(chan *net.TCPConn)
+	acceptErr := make(chan error, 1)
+	go func() {
+		conn, err := listener.AcceptTCP()
+		if err != nil {
+			acceptErr <- err
+			return
+		}
+		accepted <- conn
+	}()
+
+	peer, err := net.DialTCP("tcp", nil, listener.Addr().(*net.TCPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case conn := <-accepted:
+		return conn, peer
+	case err := <-acceptErr:
+		_ = peer.Close()
+		t.Fatal(err)
+		return nil, nil
+	}
+}
+
 func TestLocalPortForwardingRespectsCallback(t *testing.T) {
 	t.Parallel()
 
