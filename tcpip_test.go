@@ -96,6 +96,9 @@ func TestBicopyPreservesHalfClose(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := c2Peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	request, err := io.ReadAll(c2Peer)
 	if err != nil {
 		t.Fatal(err)
@@ -111,6 +114,9 @@ func TestBicopyPreservesHalfClose(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := c1Peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	response, err := io.ReadAll(c1Peer)
 	if err != nil {
 		t.Fatal(err)
