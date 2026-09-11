@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.9](https://github.com/devsy-org/ssh/compare/v1.2.8...v1.2.9) (2026-09-11)
+
+
+### Bug Fixes
+
+* preserve SSH forwarding half-close semantics ([#34](https://github.com/devsy-org/ssh/issues/34)) ([70992bf](https://github.com/devsy-org/ssh/commit/70992bf67edf1e3bc4d86ec4455c8ffa9eb056af))
+
 ## [1.2.8](https://github.com/devsy-org/ssh/compare/v1.2.7...v1.2.8) (2026-09-08)
 
 
