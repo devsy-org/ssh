@@ -58,7 +58,10 @@ func (ska *SessionKeepAlive) ServerRequestedKeepAliveCallback() {
 	ska.metrics.ServerRequestedKeepAlive++
 }
 
-// Reset resets the keep-alive timer.
+// Reset resets the keep-alive timer after a reply to a server-requested
+// keepalive is received. Both positive and negative SSH replies prove peer
+// liveness; callers should invoke Reset whenever the request completed without
+// a transport error.
 func (ska *SessionKeepAlive) Reset() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
@@ -71,12 +74,11 @@ func (ska *SessionKeepAlive) Reset() {
 	}
 }
 
-// notePeerActivity records inbound traffic from the peer. It bumps
-// lastReceived (clearing the dead-peer deadline used by TimeIsUp) and
-// resets the ticker so the next probe fires `interval` after the most
-// recent activity. Matches OpenSSH sshd, which clears keep_alive_timeouts
-// on every successfully-received packet and defers the next probe on
-// inbound traffic. Internal — driven by the package's request loops.
+// notePeerActivity records inbound request activity that this package can
+// directly observe, such as global requests and per-channel requests. Ordinary
+// SSH channel payload is consumed inside golang.org/x/crypto/ssh and is not
+// visible here. Transport liveness does not depend on observing all payload
+// traffic because server keepalive replies independently refresh the deadline.
 func (ska *SessionKeepAlive) notePeerActivity() {
 	ska.m.Lock()
 	defer ska.m.Unlock()
